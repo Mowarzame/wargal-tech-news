@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="TechNewsApi/TechNewsApi.csproj" />
+  <Project Path="TechNewsCore/TechNewsCore.csproj" />
+  <Project Path="TechNewsWorker/TechNewsWorker.csproj" />
+</Solution>

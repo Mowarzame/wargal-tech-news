@@ -1,0 +1,53 @@
+# macOS
+.DS_Store
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.log
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+
+# Flutter / Android
+build/
+.android/
+.ios/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Docker
+*.tar
+
+# IDEs
+.vscode/
+.idea/
+
+# Logs
+logs/
+
+# .NET build outputs (all projects)
+**/bin/
+**/obj/
+
+# Flutter build outputs
+tech_news_app/build/
+
+# Flutter/Android tooling + logs/archives
+**/bugreport-*.zip
+
+# If any tool creates folders with literal backslashes in the name (bad paths)
+**/bin\\**
+**/obj\\**
