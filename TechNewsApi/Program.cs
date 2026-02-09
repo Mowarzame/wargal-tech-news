@@ -11,7 +11,8 @@ using TechNewsApi.Repositories.Interfaces;
 var builder = WebApplication.CreateBuilder(args);
 
 // Read JWT key from appsettings.json
-var keyString = builder.Configuration["Jwt:Key"]!;
+var keyString = builder.Configuration["JWT:Key"]!;
+
 var key = Encoding.ASCII.GetBytes(keyString);
 
 builder.Services.AddControllers();
@@ -38,14 +39,12 @@ builder.Services.AddCors(options =>
     options.AddPolicy("WebCorsPolicy", policy =>
     {
         policy
-            .SetIsOriginAllowed(origin =>
-                origin.StartsWith("http://localhost") ||
-                origin.StartsWith("http://127.0.0.1"))
+            .AllowAnyOrigin()
             .AllowAnyMethod()
-            .AllowAnyHeader()
-            .AllowCredentials();
+            .AllowAnyHeader();
     });
 });
+
 
 
 
@@ -57,7 +56,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     {
         ValidateIssuerSigningKey = true,
         IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)),
+           Encoding.UTF8.GetBytes(builder.Configuration["JWT:Key"]!)
+),
         ValidateIssuer = false,
         ValidateAudience = false,
         RoleClaimType = ClaimTypes.Role
@@ -71,7 +71,11 @@ builder.Services.AddHttpClient();
 
 var app = builder.Build();
 
-app.UseHttpsRedirection();
+if (app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
 app.UseCors("WebCorsPolicy");
 
 
