@@ -41,37 +41,42 @@ export default function NewsFeedList({ items, onOpen }: Props) {
           <Card
             key={it.id}
             variant="outlined"
-            sx={{ borderRadius: 2, overflow: "hidden", cursor: "pointer" }}
+            sx={{
+              borderRadius: 2,
+              overflow: "hidden",
+              cursor: "pointer",
+              transition: "0.15s",
+              "&:hover": { boxShadow: 2, borderColor: "rgba(0,0,0,.18)" },
+            }}
             onClick={() => onOpen(it)}
           >
             <Box sx={{ display: "flex" }}>
-              {/* image (optional) */}
               {img ? (
                 <CardMedia
                   component="img"
                   image={img}
                   alt={it.title}
-                  sx={{ width: 140, height: 110, objectFit: "cover" }}
+                  sx={{ width: 150, height: 112, objectFit: "cover" }}
                 />
               ) : (
-                <Box sx={{ width: 140, height: 110, bgcolor: "grey.100" }} />
+                <Box sx={{ width: 150, height: 112, bgcolor: "grey.100" }} />
               )}
 
               <CardContent sx={{ flex: 1, py: 1.2 }}>
-                {/* meta row */}
                 <Box
                   sx={{
                     display: "flex",
                     alignItems: "center",
                     gap: 1,
-                    mb: 0.5,
+                    mb: 0.6,
+                    minWidth: 0,
                   }}
                 >
                   <Avatar src={icon} sx={{ width: 22, height: 22 }}>
                     {(it.sourceName?.[0] ?? "S").toUpperCase()}
                   </Avatar>
 
-                  <Typography variant="body2" fontWeight={800} noWrap>
+                  <Typography variant="body2" fontWeight={900} noWrap>
                     {it.sourceName}
                   </Typography>
 
@@ -86,14 +91,17 @@ export default function NewsFeedList({ items, onOpen }: Props) {
 
                   <Box sx={{ flex: 1 }} />
 
-                  {/* time ago */}
-                  <TimeAgo iso={it.publishedAt} />
+                  {/* ✅ visible on all sizes */}
+                  <TimeAgo
+                    iso={it.publishedAt}
+                    variant="caption"
+                    sx={{ color: "text.secondary", fontWeight: 800 }}
+                  />
                 </Box>
 
-                {/* title only */}
                 <Typography
                   variant="subtitle1"
-                  fontWeight={900}
+                  fontWeight={950}
                   sx={{
                     lineHeight: 1.2,
                     display: "-webkit-box",
@@ -104,8 +112,6 @@ export default function NewsFeedList({ items, onOpen }: Props) {
                 >
                   {it.title}
                 </Typography>
-
-                {/* ✅ summary removed بالكامل */}
               </CardContent>
             </Box>
           </Card>

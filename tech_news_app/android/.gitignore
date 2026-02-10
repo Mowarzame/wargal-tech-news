@@ -12,8 +12,3 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
-
-
-key.properties
-app/keystore/
-*.jks

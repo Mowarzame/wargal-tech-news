@@ -53,9 +53,6 @@ export default function Navbar() {
   }}
 />
 
-          <Typography fontWeight={900} sx={{ letterSpacing: 0.3 }}>
-            Wargal
-          </Typography>
         </Box>
 
         {/* Center: scrolling icons (marquee) */}

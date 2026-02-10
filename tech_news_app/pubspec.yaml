@@ -50,7 +50,7 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.13.1
-
+  flutter_native_splash: ^2.4.1
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
@@ -61,13 +61,23 @@ flutter:
   assets:
     - assets/images/
 
-
+    - assets/icon/
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icon/wargalIconAndLogo.png"
-  adaptive_icon_background: "#1565C0"
-  adaptive_icon_foreground: "assets/icon/wargalIconAndLogo.png"
+  image_path: assets/icon/wargalIconAndLogo.png
+  adaptive_icon_background: "#1E4E7A"   # change to your brand color
+  adaptive_icon_foreground: assets/icon/wargalIconAndLogo.png
+
+flutter_native_splash:
+  color: "#1E4E7A"                     # match your brand background
+  image: assets/icon/wargalIconAndLogo.png
+  android: true
+  ios: true
+  android_12:
+    color: "#1E4E7A"
+    image: assets/icon/wargalIconAndLogo.png
+
 
   # To add assets to your application, add an assets section, like this:
   # assets:

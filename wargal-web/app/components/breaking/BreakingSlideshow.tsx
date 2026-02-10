@@ -14,126 +14,110 @@ type Props = {
   intervalMs?: number;
 };
 
-export default function BreakingSlideshow({ items, onOpen, intervalMs = 6000 }: Props) {
+function clean(s?: string | null) {
+  return (s ?? "").trim();
+}
+
+export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: Props) {
   const [index, setIndex] = useState(0);
 
   useEffect(() => {
     if (items.length <= 1) return;
-
-    const id = setInterval(() => {
-      setIndex((i) => (i + 1) % items.length);
-    }, intervalMs);
-
+    const id = setInterval(() => setIndex((i) => (i + 1) % items.length), intervalMs);
     return () => clearInterval(id);
   }, [items.length, intervalMs]);
 
   useEffect(() => {
-    // keep index valid when items change
     if (index >= items.length) setIndex(0);
-  }, [items.length, index]);
+  }, [index, items.length]);
 
   if (!items?.length) return null;
 
   const item = items[index];
-
-  const image =
-    item.imageUrl && item.imageUrl.trim().length > 0 ? item.imageUrl : "/placeholder-news.jpg";
-
-  const sourceIcon =
-    item.sourceIconUrl && item.sourceIconUrl.trim().length > 0 ? item.sourceIconUrl : undefined;
-
+  const image = clean(item.imageUrl) ? item.imageUrl! : "/placeholder-news.jpg";
+  const sourceIcon = clean(item.sourceIconUrl) ? item.sourceIconUrl! : undefined;
   const isVideo = item.kind === 2;
 
-  // for Fade key stability even if id repeats in feed
   const fadeKey = useMemo(() => `${item.id}:${index}`, [item.id, index]);
 
   return (
     <Box
       sx={{
         position: "relative",
-        borderRadius: 3,
+        borderRadius: { xs: 2, md: 3 },
         overflow: "hidden",
         bgcolor: "common.white",
-        boxShadow: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        boxShadow: { xs: 1, md: 2 },
+        width: "100%",
       }}
     >
-      <Fade key={fadeKey} in timeout={450}>
+      <Fade key={fadeKey} in timeout={320}>
         <Box
           onClick={() => onOpen(item)}
           sx={{
             cursor: "pointer",
-            height: { xs: 220, sm: 260, md: 320 }, // ✅ responsive
-            backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,0) 35%, rgba(0,0,0,.78)), url(${image})`,
+            height: { xs: 320, sm: 380, md: 460, lg: 540 },
+            backgroundImage: `
+              linear-gradient(to top, rgba(0,0,0,.90) 0%, rgba(0,0,0,.45) 42%, rgba(0,0,0,.10) 80%),
+              url(${image})
+            `,
             backgroundSize: "cover",
             backgroundPosition: "center",
-            p: { xs: 1.5, sm: 2, md: 2.5 },
+            // ✅ reserve space so dots NEVER overlap the source row
+            pb: { xs: 7, sm: 7, md: 7 },
+            px: { xs: 1.5, sm: 2.25, md: 3 },
+            pt: { xs: 1.5, sm: 2.25, md: 3 },
             display: "flex",
             flexDirection: "column",
             justifyContent: "flex-end",
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1, flexWrap: "wrap" }}>
-            <FlashOnIcon sx={{ color: "error.main" }} />
-            <Typography variant="caption" fontWeight={900} color="error.main">
-              BREAKING
-            </Typography>
-
-            {isVideo && (
-              <Chip
-                label="YouTube"
-                color="error"
-                size="small"
-                sx={{
-                  height: 22,
-                  "& .MuiChip-label": { fontWeight: 900, fontSize: 11, px: 1 },
-                }}
-              />
-            )}
-
-            <Box sx={{ flex: 1 }} />
-
-            {/* time ago in white */}
-            <Box sx={{ color: "rgba(255,255,255,.9)", fontSize: { xs: 12, md: 13 } }}>
-            <TimeAgo
-              iso={item?.publishedAt}
-            variant="caption"
-           color="grey.300"
-              sx={{ display: "block", lineHeight: 1.1 }}
-           />
-            </Box>
-          </Stack>
-
+          {/* Bottom content area only (safe zone) */}
           <Typography
             sx={{
               color: "common.white",
               fontWeight: 950,
-              lineHeight: 1.1,
-              // ✅ responsive title sizing
-              fontSize: { xs: 18, sm: 22, md: 28, lg: 32 },
+              lineHeight: 1.08,
+              fontSize: { xs: 19, sm: 28, md: 38, lg: 44 },
               display: "-webkit-box",
               WebkitBoxOrient: "vertical",
-              WebkitLineClamp: { xs: 3, sm: 3, md: 2 },
+              WebkitLineClamp: { xs: 3, sm: 2, md: 2 },
               overflow: "hidden",
-              mb: { xs: 1, md: 1.25 },
-              textShadow: "0 2px 10px rgba(0,0,0,.35)",
+              mb: { xs: 1.1, md: 1.4 },
+              textShadow: "0 2px 18px rgba(0,0,0,.55)",
+              maxWidth: { xs: "100%", md: "92%" },
             }}
           >
             {item.title}
           </Typography>
 
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Avatar src={sourceIcon} sx={{ width: 26, height: 26 }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+            <Avatar
+              src={sourceIcon}
+              sx={{
+                width: { xs: 24, md: 30 },
+                height: { xs: 24, md: 30 },
+                bgcolor: "rgba(255,255,255,.22)",
+                border: "1px solid rgba(255,255,255,.28)",
+                flex: "0 0 auto",
+              }}
+            >
               {!sourceIcon && item.sourceName?.[0]}
             </Avatar>
+
             <Typography
               sx={{
-                color: "rgba(255,255,255,.85)",
+                color: "rgba(255,255,255,.92)",
                 fontWeight: 900,
-                fontSize: { xs: 12, md: 13 },
-                maxWidth: "70%",
+                fontSize: { xs: 12, md: 13.5 },
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                textShadow: "0 2px 10px rgba(0,0,0,.45)",
+                minWidth: 0,
+                flex: 1,
               }}
             >
               {item.sourceName}
@@ -142,6 +126,70 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6000 }: 
         </Box>
       </Fade>
 
+      {/* ✅ Top-left badges (separate from title area => no mixing) */}
+      <Box
+        sx={{
+          position: "absolute",
+          top: { xs: 10, md: 14 },
+          left: { xs: 10, md: 14 },
+          zIndex: 10,
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          px: 1.1,
+          py: 0.7,
+          borderRadius: 999,
+          bgcolor: "rgba(0,0,0,.35)",
+          backdropFilter: "blur(8px)",
+          border: "1px solid rgba(255,255,255,.18)",
+        }}
+      >
+        <FlashOnIcon sx={{ color: "error.main", fontSize: 18 }} />
+        <Typography
+          variant="caption"
+          sx={{ color: "error.main", fontWeight: 950, letterSpacing: 0.6 }}
+        >
+          BREAKING
+        </Typography>
+        {isVideo && (
+          <Chip
+            label="YouTube"
+            color="error"
+            size="small"
+            sx={{
+              height: 20,
+              "& .MuiChip-label": { fontWeight: 900, fontSize: 10.5, px: 0.8 },
+            }}
+          />
+        )}
+      </Box>
+
+      {/* ✅ Top-right time pill */}
+      <Box
+        sx={{
+          position: "absolute",
+          top: { xs: 10, md: 14 },
+          right: { xs: 10, md: 14 },
+          zIndex: 10,
+          px: 1.1,
+          py: 0.7,
+          borderRadius: 999,
+          bgcolor: "rgba(0,0,0,.35)",
+          backdropFilter: "blur(8px)",
+          border: "1px solid rgba(255,255,255,.18)",
+        }}
+      >
+        <TimeAgo
+          iso={item.publishedAt}
+          variant="caption"
+          sx={{
+            color: "rgba(255,255,255,.92)",
+            fontWeight: 900,
+            fontSize: { xs: 11, md: 12 },
+          }}
+        />
+      </Box>
+
       {/* Arrows */}
       {items.length > 1 && (
         <>
@@ -149,11 +197,15 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6000 }: 
             onClick={() => setIndex((i) => (i - 1 + items.length) % items.length)}
             sx={{
               position: "absolute",
-              top: "50%",
-              left: 10,
+              top: { xs: "46%", md: "50%" }, // ✅ slightly higher on mobile
+              left: { xs: 8, md: 14 },
               transform: "translateY(-50%)",
-              bgcolor: "rgba(255,255,255,.88)",
-              "&:hover": { bgcolor: "rgba(255,255,255,.95)" },
+              bgcolor: "rgba(255,255,255,.92)",
+              "&:hover": { bgcolor: "rgba(255,255,255,.98)" },
+              boxShadow: 2,
+              width: { xs: 38, md: 46 },
+              height: { xs: 38, md: 46 },
+              zIndex: 12,
             }}
           >
             <ArrowBackIosNewIcon fontSize="small" />
@@ -163,15 +215,50 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6000 }: 
             onClick={() => setIndex((i) => (i + 1) % items.length)}
             sx={{
               position: "absolute",
-              top: "50%",
-              right: 10,
+              top: { xs: "46%", md: "50%" },
+              right: { xs: 8, md: 14 },
               transform: "translateY(-50%)",
-              bgcolor: "rgba(255,255,255,.88)",
-              "&:hover": { bgcolor: "rgba(255,255,255,.95)" },
+              bgcolor: "rgba(255,255,255,.92)",
+              "&:hover": { bgcolor: "rgba(255,255,255,.98)" },
+              boxShadow: 2,
+              width: { xs: 38, md: 46 },
+              height: { xs: 38, md: 46 },
+              zIndex: 12,
             }}
           >
             <ArrowForwardIosIcon fontSize="small" />
           </IconButton>
+
+          {/* Dots (bottom center, safe) */}
+          <Box
+            sx={{
+              position: "absolute",
+              bottom: { xs: 10, md: 14 },
+              left: "50%",
+              transform: "translateX(-50%)",
+              display: "flex",
+              gap: 0.8,
+              px: 1.2,
+              py: 0.75,
+              borderRadius: 999,
+              bgcolor: "rgba(0,0,0,.25)",
+              backdropFilter: "blur(6px)",
+              zIndex: 12,
+            }}
+          >
+            {items.slice(0, Math.min(items.length, 8)).map((_, i) => (
+              <Box
+                key={i}
+                sx={{
+                  width: i === index ? 14 : 7,
+                  height: 7,
+                  borderRadius: 99,
+                  transition: "0.2s",
+                  bgcolor: i === index ? "common.white" : "rgba(255,255,255,.55)",
+                }}
+              />
+            ))}
+          </Box>
         </>
       )}
     </Box>

@@ -8,9 +8,9 @@ import TimeAgo from "@/app/components/common/TimeAgo";
 
 type Props = {
   initialItems: NewsItem[];
-  pageSize?: number;                 // default 60
-  insertAfter?: number;              // default 9 (3 rows x 3 cols)
-  insert: React.ReactNode;           // CategoryLanes block
+  pageSize?: number;
+  insertAfter?: number;
+  insert: React.ReactNode;
   onOpen: (it: NewsItem) => void;
 };
 
@@ -27,7 +27,6 @@ export default function AllNewsGridWithCategories({
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
 
-  // ✅ rebuild dedupe set whenever items change
   const seenRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const s = new Set<string>();
@@ -38,7 +37,6 @@ export default function AllNewsGridWithCategories({
     seenRef.current = s;
   }, [items]);
 
-  // ✅ if initialItems changes (server refresh), reset
   useEffect(() => {
     setItems(initialItems ?? []);
     setPage(1);
@@ -59,7 +57,6 @@ export default function AllNewsGridWithCategories({
       const nextPage = page + 1;
       const fetched = await fetchFeedItems({ page: nextPage, pageSize });
 
-      // dedupe by url then id
       const toAdd: NewsItem[] = [];
       for (const it of fetched) {
         const u = (it.url ?? "").trim();
@@ -88,16 +85,13 @@ export default function AllNewsGridWithCategories({
         </Typography>
       )}
 
-      {/* ✅ First 3 rows (9 items) */}
       <NewsGrid items={firstChunk} onOpen={onOpen} />
 
-      {/* ✅ Insert categories in the middle */}
       <Box sx={{ my: 3 }}>{insert}</Box>
 
-      {/* ✅ Resume all news */}
+      {/* ✅ More Stories (time ago included + readable) */}
       <NewsGrid items={restChunk} onOpen={onOpen} />
 
-      {/* ✅ Load more stays at the bottom */}
       <Box sx={{ display: "flex", justifyContent: "center", mt: 2 }}>
         <Button
           variant="contained"
@@ -128,7 +122,7 @@ function NewsGrid({ items, onOpen }: { items: NewsItem[]; onOpen: (it: NewsItem)
         gridTemplateColumns: {
           xs: "1fr",
           sm: "repeat(2, minmax(0, 1fr))",
-          md: "repeat(3, minmax(0, 1fr))", // ✅ 3 columns like you requested
+          md: "repeat(3, minmax(0, 1fr))",
         },
         gap: 2,
       }}
@@ -149,12 +143,12 @@ function NewsGrid({ items, onOpen }: { items: NewsItem[]; onOpen: (it: NewsItem)
               border: "1px solid",
               borderColor: "divider",
               transition: "0.15s",
-              "&:hover": { boxShadow: 3 },
+              "&:hover": { boxShadow: 3, borderColor: "rgba(0,0,0,.18)" },
             }}
           >
             <Box
               sx={{
-                height: 160,
+                height: 170,
                 bgcolor: "grey.100",
                 backgroundImage: img ? `url(${img})` : "none",
                 backgroundSize: "cover",
@@ -163,22 +157,41 @@ function NewsGrid({ items, onOpen }: { items: NewsItem[]; onOpen: (it: NewsItem)
             />
 
             <Box sx={{ p: 1.25 }}>
-              <Typography fontWeight={900} lineHeight={1.2} sx={{ mb: 0.75 }}>
+              <Typography
+                fontWeight={950}
+                lineHeight={1.2}
+                sx={{
+                  mb: 0.75,
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                  minHeight: 44,
+                }}
+              >
                 {it.title}
               </Typography>
 
-       
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
                 <Avatar src={icon ? icon : undefined} sx={{ width: 20, height: 20 }}>
                   {(it.sourceName?.[0] ?? "S").toUpperCase()}
                 </Avatar>
 
-                <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1, minWidth: 0 }}>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  noWrap
+                  sx={{ flex: 1, minWidth: 0, fontWeight: 800 }}
+                >
                   {it.sourceName}
                 </Typography>
 
-                {/* ✅ time ago */}
-                <TimeAgo iso={it.publishedAt} variant="caption" color="text.secondary" />
+                {/* ✅ always visible */}
+                <TimeAgo
+                  iso={it.publishedAt}
+                  variant="caption"
+                  sx={{ color: "text.secondary", fontWeight: 900 }}
+                />
               </Box>
             </Box>
           </Box>

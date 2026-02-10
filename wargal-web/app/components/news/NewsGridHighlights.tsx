@@ -16,7 +16,7 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "repeat(3, minmax(0, 1fr))", // ✅ always 3 columns
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
         gap: { xs: 1, sm: 1.5, md: 2 },
       }}
     >
@@ -42,17 +42,13 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
               position: "relative",
               borderRadius: 2,
               overflow: "hidden",
-              boxShadow: 2,
               bgcolor: "grey.100",
-
-              // ✅ Make tiles bigger on mobile (16/9 is too short for 3 cols)
-              //    This matches what your screenshot needs.
+              border: "1px solid rgba(0,0,0,.08)",
+              boxShadow: { xs: 1, md: 2 },
               aspectRatio: { xs: "4 / 3", sm: "16 / 10", md: "16 / 9" },
-
               "&:hover img": { transform: "scale(1.05)" },
             }}
           >
-            {/* background image */}
             <Box
               component="img"
               src={image}
@@ -66,13 +62,12 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
               }}
             />
 
-            {/* overlay */}
             <Box
               sx={{
                 position: "absolute",
                 inset: 0,
                 background:
-                  "linear-gradient(to top, rgba(0,0,0,.82), rgba(0,0,0,.10))",
+                  "linear-gradient(to top, rgba(0,0,0,.88), rgba(0,0,0,.22))",
                 p: { xs: 1, sm: 1.25, md: 1.5 },
                 display: "flex",
                 flexDirection: "column",
@@ -80,27 +75,22 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
                 gap: 0.6,
               }}
             >
-              {/* title */}
               <Typography
                 sx={{
                   color: "common.white",
-                  fontWeight: 900,
+                  fontWeight: 950,
                   lineHeight: 1.15,
-
-                  // ✅ readable on 3-col mobile
                   fontSize: { xs: 11.5, sm: 12.5, md: 14 },
-
                   display: "-webkit-box",
                   WebkitBoxOrient: "vertical",
-                  WebkitLineClamp: { xs: 2, md: 2 },
+                  WebkitLineClamp: 2,
                   overflow: "hidden",
-                  textShadow: "0 2px 10px rgba(0,0,0,.35)",
+                  textShadow: "0 2px 14px rgba(0,0,0,.55)",
                 }}
               >
                 {item.title}
               </Typography>
 
-              {/* bottom row */}
               <Box
                 sx={{
                   display: "flex",
@@ -115,6 +105,8 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
                     width: { xs: 18, sm: 20, md: 22 },
                     height: { xs: 18, sm: 20, md: 22 },
                     flex: "0 0 auto",
+                    bgcolor: "rgba(255,255,255,.22)",
+                    border: "1px solid rgba(255,255,255,.25)",
                   }}
                 >
                   {!sourceIcon && item.sourceName?.[0]}
@@ -122,8 +114,8 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
 
                 <Typography
                   sx={{
-                    color: "rgba(255,255,255,.88)",
-                    fontWeight: 800,
+                    color: "rgba(255,255,255,.92)",
+                    fontWeight: 850,
                     fontSize: { xs: 9.5, sm: 10.5, md: 11 },
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -134,23 +126,21 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
                   {item.sourceName}
                 </Typography>
 
-                {/* push right */}
                 <Box sx={{ flex: 1 }} />
 
-                {/* ✅ time ago (white, compact) */}
-                <Box
+                {/* ✅ time ago white + visible always */}
+                <TimeAgo
+                  iso={item.publishedAt}
+                  variant="caption"
                   sx={{
-                    color: "rgba(255,255,255,.88)",
+                    color: "rgba(255,255,255,.92)",
+                    fontWeight: 800,
                     fontSize: { xs: 9.5, sm: 10.5, md: 11 },
+                    textShadow: "0 2px 10px rgba(0,0,0,.55)",
                     lineHeight: 1,
-                    flex: "0 0 auto",
                   }}
-                >
-                  {/* if your TimeAgo doesn't accept props, it still inherits this color if it uses Typography/span */}
-                  <TimeAgo iso={item.publishedAt} />
-                </Box>
+                />
 
-                {/* ✅ tiny badge */}
                 {isVideo && (
                   <Chip
                     label="Video"
@@ -162,7 +152,7 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
                       "& .MuiChip-label": {
                         px: 0.6,
                         fontSize: 9.5,
-                        fontWeight: 900,
+                        fontWeight: 950,
                       },
                     }}
                   />

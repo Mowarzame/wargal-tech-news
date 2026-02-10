@@ -2,6 +2,7 @@
 
 import { Box, Typography, Avatar, Stack, Chip } from "@mui/material";
 import { NewsItem } from "@/app/types/news";
+import TimeAgo from "@/app/components/common/TimeAgo";
 
 type Props = {
   items: NewsItem[];
@@ -37,6 +38,8 @@ export default function FourUpRow({ items, onOpen }: Props) {
               boxShadow: 1,
               "&:hover": { boxShadow: 3 },
               bgcolor: "common.white",
+              border: "1px solid",
+              borderColor: "divider",
             }}
           >
             <Box
@@ -47,18 +50,48 @@ export default function FourUpRow({ items, onOpen }: Props) {
             />
 
             <Box sx={{ p: 1.5 }}>
-              <Typography variant="body2" fontWeight={800} lineHeight={1.25}>
+              <Typography
+                variant="body2"
+                fontWeight={900}
+                lineHeight={1.25}
+                sx={{
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                  minHeight: 36,
+                }}
+              >
                 {item.title}
               </Typography>
 
-              <Stack direction="row" spacing={1} alignItems="center" mt={1}>
+              <Stack direction="row" spacing={1} alignItems="center" mt={1} sx={{ minWidth: 0 }}>
                 <Avatar src={item.sourceIconUrl ?? undefined} sx={{ width: 22, height: 22 }}>
                   {(item.sourceName?.[0] ?? "S").toUpperCase()}
                 </Avatar>
 
-                <Typography variant="caption" color="text.secondary">
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontWeight: 800, minWidth: 0 }}
+                  noWrap
+                >
                   {item.sourceName}
                 </Typography>
+
+                <Box sx={{ flex: 1 }} />
+
+                {/* ✅ Time ago added + visible */}
+                <TimeAgo
+                  iso={item.publishedAt}
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                    fontWeight: 900,
+                    whiteSpace: "nowrap",
+                    fontSize: { xs: 11, md: 12 },
+                  }}
+                />
 
                 {item.kind === 2 && <Chip label="Video" size="small" color="error" />}
               </Stack>
