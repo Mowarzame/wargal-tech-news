@@ -18,7 +18,8 @@ class BreakingNewsScreen extends StatefulWidget {
   State<BreakingNewsScreen> createState() => _BreakingNewsScreenState();
 }
 
-class _BreakingNewsScreenState extends State<BreakingNewsScreen> {
+class _BreakingNewsScreenState extends State<BreakingNewsScreen>
+    with WidgetsBindingObserver {
   bool _inited = false;
 
   Timer? _timer;
@@ -30,21 +31,127 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen> {
   // Track what has been shown in the current cycle so we don't repeat
   final Set<String> _shownUrls = <String>{};
 
+  // ---------------------------
+  // LIFECYCLE
+  // ---------------------------
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+
     if (!_inited) {
       _inited = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) context.read<NewsProvider>().init();
+        if (!mounted) return;
+        context.read<NewsProvider>().init();
       });
     }
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
+
+    final p = context.read<NewsProvider>();
+
+    if (state == AppLifecycleState.resumed) {
+      // If you implemented provider auto refresh:
+      // p.setAutoRefreshEnabled(true);
+      // p.autoRefreshTop();
+
+      // Restart slideshow timer
+      _startOrStopTimer();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      // Stop slideshow timer (battery safe)
+      _timer?.cancel();
+      _timer = null;
+
+      // Optional provider pause:
+      // p.setAutoRefreshEnabled(false);
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _timer = null;
     super.dispose();
+  }
+
+  // ---------------------------
+  // SLIDESHOW TIMER LOGIC
+  // ---------------------------
+
+  void _startOrStopTimer() {
+    // If less than 2 items → no slideshow needed
+    if (_queue.length < 2) {
+      _timer?.cancel();
+      _timer = null;
+      return;
+    }
+
+    // If already running → do nothing
+    if (_timer != null) return;
+
+    _timer = Timer.periodic(const Duration(seconds: 6), (_) {
+      if (!mounted) return;
+      _goNext();
+    });
+  }
+
+  // ---------------------------
+  // NAVIGATION HELPERS
+  // (you already have these below)
+  // ---------------------------
+
+  void _goNext() {
+    if (_queue.isEmpty) return;
+
+    if (_shownUrls.length >= _queue.length) {
+      _shownUrls.clear();
+      _shownUrls.add(_queue[_pos].url.trim());
+    }
+
+    int attempts = 0;
+    int next = _pos;
+
+    while (attempts < _queue.length) {
+      next = (next + 1) % _queue.length;
+      final url = _queue[next].url.trim();
+
+      if (!_shownUrls.contains(url)) {
+        setState(() {
+          _pos = next;
+          _shownUrls.add(url);
+        });
+        return;
+      }
+
+      attempts++;
+    }
+
+    setState(() {
+      _pos = (_pos + 1) % _queue.length;
+      _shownUrls.add(_queue[_pos].url.trim());
+    });
+  }
+
+  void _goPrev() {
+    if (_queue.isEmpty) return;
+
+    setState(() {
+      _pos = (_pos - 1 + _queue.length) % _queue.length;
+      _shownUrls.add(_queue[_pos].url.trim());
+    });
   }
 
   void _openItem(BuildContext context, NewsItem item) {
@@ -154,57 +261,6 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen> {
     if (_queue.isNotEmpty) _shownUrls.add(_queue[0].url.trim());
   }
 
-  void _startOrStopTimer() {
-    if (_queue.length < 2) {
-      _timer?.cancel();
-      _timer = null;
-      return;
-    }
-    if (_timer != null) return;
-
-    _timer = Timer.periodic(const Duration(seconds: 6), (_) {
-      if (!mounted) return;
-      _goNext();
-    });
-  }
-
-  void _goNext() {
-    if (_queue.isEmpty) return;
-
-    if (_shownUrls.length >= _queue.length) {
-      _shownUrls.clear();
-      _shownUrls.add(_queue[_pos].url.trim()); // prevent immediate repeat
-    }
-
-    int attempts = 0;
-    int next = _pos;
-
-    while (attempts < _queue.length) {
-      next = (next + 1) % _queue.length;
-      final url = _queue[next].url.trim();
-      if (!_shownUrls.contains(url)) {
-        setState(() {
-          _pos = next;
-          _shownUrls.add(url);
-        });
-        return;
-      }
-      attempts++;
-    }
-
-    setState(() {
-      _pos = (_pos + 1) % _queue.length;
-      _shownUrls.add(_queue[_pos].url.trim());
-    });
-  }
-
-  void _goPrev() {
-    if (_queue.isEmpty) return;
-    setState(() {
-      _pos = (_pos - 1 + _queue.length) % _queue.length;
-      _shownUrls.add(_queue[_pos].url.trim());
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
