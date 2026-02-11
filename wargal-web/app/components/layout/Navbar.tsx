@@ -14,28 +14,35 @@ import { NewsSource } from "@/app/types/news";
 export default function Navbar() {
   const [sources, setSources] = React.useState<NewsSource[]>([]);
 
-  React.useEffect(() => {
-    let alive = true;
+const REFRESH_MS = 2 * 60 * 1000;
 
-    (async () => {
-      try {
-        const list = await fetchFeedSources();
-        if (!alive) return;
+React.useEffect(() => {
+  let alive = true;
 
-        const active = (list ?? [])
-          .filter((s) => s.isActive)
-          .sort((a, b) => (b.trustLevel ?? 0) - (a.trustLevel ?? 0));
+  async function load() {
+    try {
+      const list = await fetchFeedSources();
+      if (!alive) return;
 
-        setSources(active);
-      } catch {
-        // ignore (navbar should not break)
-      }
-    })();
+      const active = (list ?? [])
+        .filter((s) => s?.isActive !== false)
+        .sort((a, b) => (b?.trustLevel ?? 0) - (a?.trustLevel ?? 0));
 
-    return () => {
-      alive = false;
-    };
-  }, []);
+      setSources(active);
+    } catch {
+      // ignore
+    }
+  }
+
+  load();
+  const id = setInterval(load, REFRESH_MS);
+
+  return () => {
+    alive = false;
+    clearInterval(id);
+  };
+}, []);
+
 
   return (
     <AppBar position="sticky" elevation={0}>

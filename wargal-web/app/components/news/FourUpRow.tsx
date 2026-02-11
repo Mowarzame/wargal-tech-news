@@ -9,6 +9,20 @@ type Props = {
   onOpen: (item: NewsItem) => void;
 };
 
+function clean(s?: string | null) {
+  return (s ?? "").trim();
+}
+
+function pickImage(it: NewsItem) {
+  const img = clean(it.imageUrl);
+  if (img) return img;
+
+  const icon = clean(it.sourceIconUrl);
+  if (icon) return icon;
+
+  return "/placeholder-news.jpg";
+}
+
 export default function FourUpRow({ items, onOpen }: Props) {
   const slice = items.slice(0, 4);
   if (!slice.length) return null;
@@ -22,10 +36,7 @@ export default function FourUpRow({ items, onOpen }: Props) {
       }}
     >
       {slice.map((item) => {
-        const image =
-          item.imageUrl && item.imageUrl.trim()
-            ? item.imageUrl
-            : "/placeholder-news.jpg";
+        const image = pickImage(item);
 
         return (
           <Box
@@ -66,31 +77,20 @@ export default function FourUpRow({ items, onOpen }: Props) {
               </Typography>
 
               <Stack direction="row" spacing={1} alignItems="center" mt={1} sx={{ minWidth: 0 }}>
-                <Avatar src={item.sourceIconUrl ?? undefined} sx={{ width: 22, height: 22 }}>
+                <Avatar src={clean(item.sourceIconUrl) ? item.sourceIconUrl! : undefined} sx={{ width: 22, height: 22 }}>
                   {(item.sourceName?.[0] ?? "S").toUpperCase()}
                 </Avatar>
 
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ fontWeight: 800, minWidth: 0 }}
-                  noWrap
-                >
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }} noWrap>
                   {item.sourceName}
                 </Typography>
 
                 <Box sx={{ flex: 1 }} />
 
-                {/* ✅ Time ago added + visible */}
                 <TimeAgo
                   iso={item.publishedAt}
                   variant="caption"
-                  sx={{
-                    color: "text.secondary",
-                    fontWeight: 900,
-                    whiteSpace: "nowrap",
-                    fontSize: { xs: 11, md: 12 },
-                  }}
+                  sx={{ color: "text.secondary", fontWeight: 900, whiteSpace: "nowrap", fontSize: { xs: 11, md: 12 } }}
                 />
 
                 {item.kind === 2 && <Chip label="Video" size="small" color="error" />}

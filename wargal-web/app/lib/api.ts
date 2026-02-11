@@ -4,35 +4,40 @@ const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE_URL || "").trim() || "http://localhost:5194";
 
 function unwrapList(json: any): any[] {
-  // Supports:
-  // 1) ServiceResponse: { data: [...] }
-  // 2) raw array: [...]
-  // 3) anything else => []
   if (Array.isArray(json)) return json;
   const data = json?.data;
   return Array.isArray(data) ? data : [];
 }
 
+function clean(s?: string | null) {
+  return (s ?? "").trim();
+}
+
 export async function fetchFeedSources(): Promise<NewsSource[]> {
-  const res = await fetch(`${API_BASE}/feed-items/sources`, { cache: "no-store" });
+  const url = `${API_BASE}/feed-items/sources?_ts=${Date.now()}`;
+  const res = await fetch(url, { cache: "no-store", headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`Sources failed (${res.status})`);
   const json = await res.json();
-  const list = (json.data ?? []) as any[];
+  const list = unwrapList(json);
 
-  return list.map((s) => ({
-    id: String(s.id),
-    name: String(s.name ?? s.sourceName ?? "Source"),
-    iconUrl: s.iconUrl ?? s.sourceIconUrl ?? null,
-    isActive: s.isActive ?? true,
-    trustLevel: s.trustLevel ?? 0,
-    category: s.category ?? null, // ✅ add
-  }));
+  return list
+    .filter(Boolean)
+    .map((s: any) => ({
+      id: String(s?.id ?? s?.Id ?? ""),
+      name: String(s?.name ?? s?.sourceName ?? s?.SourceName ?? "Source"),
+      iconUrl: s?.iconUrl ?? s?.sourceIconUrl ?? s?.SourceIconUrl ?? null,
+      isActive: s?.isActive ?? s?.IsActive ?? true,
+      trustLevel: s?.trustLevel ?? s?.TrustLevel ?? 0,
+      category: s?.category ?? s?.Category ?? null,
+      websiteUrl: s?.websiteUrl ?? s?.WebsiteUrl ?? null,
+    }))
+    .filter((s) => clean(s.id).length > 0);
 }
 
 export async function fetchFeedItems(params?: {
   page?: number;
   pageSize?: number;
-  kind?: string; // "Article" | "Video" (optional) — passed through as-is
+  kind?: string;
   sourceId?: string;
   q?: string;
 }): Promise<NewsItem[]> {
@@ -40,8 +45,9 @@ export async function fetchFeedItems(params?: {
   qs.set("page", String(params?.page ?? 1));
   qs.set("pageSize", String(params?.pageSize ?? 20));
   if (params?.kind) qs.set("kind", params.kind);
-  if (params?.sourceId) qs.set("sourceId", params.sourceId);
+  if (params?.sourceId) qs.set("sourceId", String(params.sourceId));
   if (params?.q) qs.set("q", params.q);
+  qs.set("_ts", String(Date.now())); // ✅ cache-buster
 
   const res = await fetch(`${API_BASE}/feed-items?${qs.toString()}`, {
     cache: "no-store",
@@ -52,14 +58,10 @@ export async function fetchFeedItems(params?: {
   const json = await res.json();
   const list = unwrapList(json);
 
-  // ✅ Centralized normalization (linkUrl -> url etc)
-  return list.map(normalizeFeedItem);
+  // ✅ normalize + remove any falsy
+  return list.filter(Boolean).map(normalizeFeedItem).filter(Boolean);
 }
 
-/**
- * Server-component friendly homepage wrappers (as requested)
- * These do NOT change behavior; they just provide stable defaults.
- */
 export async function getFeedItems(): Promise<NewsItem[]> {
   return fetchFeedItems({ page: 1, pageSize: 60 });
 }

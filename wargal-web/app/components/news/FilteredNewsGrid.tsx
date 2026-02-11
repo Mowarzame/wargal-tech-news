@@ -1,18 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-
+import { Box, Button, CircularProgress, Typography } from "@mui/material";
 import { NewsItem } from "@/app/types/news";
 import { fetchFeedItems } from "@/app/lib/api";
-import { Box, Card, CardContent, CardMedia, Typography, Avatar, Stack, Button , CircularProgress} from "@mui/material";
 import TimeAgo from "@/app/components/common/TimeAgo";
 
 type Props = {
   selectedSourceIds: string[]; // empty => all
   initialItems: NewsItem[];
-  pageSize?: number; // default 60
-  columns?: { xs: number; sm: number; md: number; lg: number }; // default 1/2/3/4
+  pageSize?: number;
+  columns?: { xs: number; sm: number; md: number; lg: number };
 };
+
+const REFRESH_MS = 2 * 60 * 1000;
+
+function clean(s?: string | null) {
+  return (s ?? "").trim();
+}
+
+function safeUrl(u?: string | null) {
+  const url = clean(u);
+  return url.startsWith("http") ? url : "";
+}
+
+function pickImage(it?: NewsItem) {
+  const img = clean(it?.imageUrl);
+  if (img) return img;
+  const icon = clean(it?.sourceIconUrl);
+  if (icon) return icon;
+  return "/placeholder-news.jpg";
+}
 
 export default function FilteredNewsGrid({
   selectedSourceIds,
@@ -20,40 +38,101 @@ export default function FilteredNewsGrid({
   pageSize = 60,
   columns = { xs: 1, sm: 2, md: 3, lg: 4 },
 }: Props) {
-  const [items, setItems] = useState<NewsItem[]>(initialItems ?? []);
+  const [items, setItems] = useState<NewsItem[]>((initialItems ?? []).filter(Boolean));
   const [page, setPage] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
 
-  const selectedSet = useMemo(() => new Set(selectedSourceIds.map(String)), [selectedSourceIds]);
-  const isAll = selectedSourceIds.length === 0;
-  const isSingle = selectedSourceIds.length === 1;
+  const selectedSet = useMemo(() => new Set((selectedSourceIds ?? []).map(String)), [selectedSourceIds]);
+  const isAll = (selectedSourceIds ?? []).length === 0;
+  const isSingle = (selectedSourceIds ?? []).length === 1;
 
-  // ✅ reset local state when selection changes (important!)
+  // ✅ Reset local list on selection change (safe)
   useEffect(() => {
-    setItems(initialItems ?? []);
+    setItems((initialItems ?? []).filter(Boolean));
     setPage(1);
     setError(null);
     setHasMore(true);
   }, [initialItems, selectedSourceIds.join("|")]);
 
-  // ✅ dedupe helper (stable)
+  // ✅ Dedupe set
   const seenRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const s = new Set<string>();
-    for (const it of items) {
-      const u = (it.url ?? "").trim();
-      s.add(u ? `u:${u}` : `id:${it.id}`);
+    for (const it of items ?? []) {
+      if (!it) continue;
+      const u = clean(it.url);
+      const k = u ? `u:${u}` : `id:${clean(it.id)}`;
+      if (k) s.add(k);
     }
     seenRef.current = s;
   }, [items]);
 
-  const onOpen = (it: NewsItem) => {
-    const url = (it.url ?? "").trim();
-    if (!url.startsWith("http")) return;
+  const onOpen = (it?: NewsItem) => {
+    const url = safeUrl(it?.url);
+    if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
   };
+
+  const filterForMulti = (arr: NewsItem[]) => {
+    if (isAll || isSingle) return arr;
+    return (arr ?? []).filter((it) => it?.sourceId && selectedSet.has(String(it.sourceId)));
+  };
+
+  const mergeTop = (prev: NewsItem[], next: NewsItem[]) => {
+    const out: NewsItem[] = [];
+    const seen = new Set<string>();
+
+    const add = (it: NewsItem) => {
+      if (!it) return;
+      const u = clean(it.url);
+      const k = u ? `u:${u}` : `id:${clean(it.id)}`;
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      out.push(it);
+    };
+
+    for (const it of next ?? []) add(it);
+    for (const it of prev ?? []) add(it);
+
+    return out;
+  };
+
+  // ✅ Auto refresh every 2 minutes (page 1) and merge into top
+  useEffect(() => {
+    let alive = true;
+
+    async function refresh() {
+      try {
+        setRefreshing(true);
+        const fetched = await fetchFeedItems({
+          page: 1,
+          pageSize,
+          sourceId: isSingle ? selectedSourceIds[0] : undefined,
+        });
+
+        const filtered = filterForMulti((fetched ?? []).filter(Boolean));
+        if (!alive) return;
+
+        setItems((prev) => mergeTop(prev ?? [], filtered));
+        setError(null);
+      } catch (e: any) {
+        if (!alive) return;
+        setError(e?.message ?? "Failed to refresh news");
+      } finally {
+        if (alive) setRefreshing(false);
+      }
+    }
+
+    refresh();
+    const id = setInterval(refresh, REFRESH_MS);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [selectedSourceIds.join("|"), pageSize]);
 
   const loadMore = async () => {
     if (loadingMore || !hasMore) return;
@@ -64,36 +143,28 @@ export default function FilteredNewsGrid({
     try {
       const nextPage = page + 1;
 
-      // ✅ Single-source: fetch server-filtered
-      // ✅ Multi/all: fetch global page and filter client-side (Flutter approach)
       const fetched = await fetchFeedItems({
         page: nextPage,
         pageSize,
         sourceId: isSingle ? selectedSourceIds[0] : undefined,
       });
 
-      // filter for multi-select (or all => keep)
-      const filtered = (isAll || isSingle)
-        ? fetched
-        : fetched.filter((it) => it.sourceId && selectedSet.has(String(it.sourceId)));
+      const filtered = filterForMulti((fetched ?? []).filter(Boolean));
 
-      // dedupe
       const toAdd: NewsItem[] = [];
       for (const it of filtered) {
-        const u = (it.url ?? "").trim();
-        const k = u ? `u:${u}` : `id:${it.id}`;
-        if (seenRef.current.has(k)) continue;
+        if (!it) continue;
+        const u = clean(it.url);
+        const k = u ? `u:${u}` : `id:${clean(it.id)}`;
+        if (!k || seenRef.current.has(k)) continue;
         seenRef.current.add(k);
         toAdd.push(it);
       }
 
-      setItems((prev) => [...prev, ...toAdd]);
+      setItems((prev) => [...(prev ?? []), ...toAdd]);
       setPage(nextPage);
 
-      // heuristic: if backend returns less than pageSize, probably no more pages
-      if (fetched.length < pageSize) setHasMore(false);
-      // if we fetched but after filtering got none, we still might have more in later pages
-      // so we do NOT set hasMore=false on filtered empty.
+      if ((fetched ?? []).length < pageSize) setHasMore(false);
     } catch (e: any) {
       setError(e?.message ?? "Failed to load more news");
     } finally {
@@ -101,11 +172,19 @@ export default function FilteredNewsGrid({
     }
   };
 
+  const list = (items ?? []).filter(Boolean);
+
   return (
     <Box>
       {!!error && (
         <Typography color="error.main" sx={{ mb: 1 }}>
           {error}
+        </Typography>
+      )}
+
+      {refreshing && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+          Updating…
         </Typography>
       )}
 
@@ -121,13 +200,13 @@ export default function FilteredNewsGrid({
           gap: 2,
         }}
       >
-        {items.map((it) => {
-          const img = (it.imageUrl ?? "").trim();
-          const icon = (it.sourceIconUrl ?? "").trim();
+        {list.map((it) => {
+          const img = pickImage(it);
+          const icon = clean(it?.sourceIconUrl);
 
           return (
             <Box
-              key={it.id}
+              key={clean(it?.id) || `${img}-${Math.random()}`}
               onClick={() => onOpen(it)}
               sx={{
                 cursor: "pointer",
@@ -140,30 +219,28 @@ export default function FilteredNewsGrid({
                 "&:hover": { boxShadow: 3 },
               }}
             >
-              {/* image */}
               <Box
                 sx={{
                   height: 160,
                   bgcolor: "grey.100",
-                  backgroundImage: img ? `url(${img})` : "none",
+                  backgroundImage: `url(${img})`,
                   backgroundSize: "cover",
                   backgroundPosition: "center",
                 }}
               />
 
               <Box sx={{ p: 1.25 }}>
-                <Typography fontWeight={900} lineHeight={1.2} sx={{ mb: 0.75 }} noWrap>
-                  {it.title}
+                <Typography fontWeight={900} lineHeight={1.2} sx={{ mb: 0.75 }}>
+                  {clean(it?.title) || "(Untitled)"}
                 </Typography>
 
-                {!!it.summary && (
+                {!!clean(it?.summary) && (
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} noWrap>
-                    {it.summary}
+                    {clean(it?.summary)}
                   </Typography>
                 )}
 
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
-                  {/* source icon */}
                   <Box
                     sx={{
                       width: 18,
@@ -177,13 +254,14 @@ export default function FilteredNewsGrid({
                     }}
                   />
                   <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1 }}>
-                    {it.sourceName}
+                    {clean(it?.sourceName) || "Source"}
                   </Typography>
 
                   <Box sx={{ flex: 1 }} />
-  <TimeAgo iso={it.publishedAt} variant="caption" color="text.secondary" />
 
-                  {it.kind === 2 && (
+                  <TimeAgo iso={it?.publishedAt} variant="caption" color="text.secondary" />
+
+                  {it?.kind === 2 && (
                     <Box
                       sx={{
                         px: 1,
@@ -200,18 +278,12 @@ export default function FilteredNewsGrid({
                     </Box>
                   )}
                 </Box>
-
-                {/* keep string; no Date parsing to avoid SSR hydration issues */}
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
-                  {it.publishedAt}
-                </Typography>
               </Box>
             </Box>
           );
         })}
       </Box>
 
-      {/* load more */}
       <Box sx={{ display: "flex", justifyContent: "center", mt: 2 }}>
         <Button
           variant="contained"

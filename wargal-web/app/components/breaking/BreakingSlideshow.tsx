@@ -9,7 +9,7 @@ import { NewsItem } from "@/app/types/news";
 import TimeAgo from "@/app/components/common/TimeAgo";
 
 type Props = {
-  items: NewsItem[];
+  items: NewsItem[] | null | undefined;
   onOpen: (item: NewsItem) => void;
   intervalMs?: number;
 };
@@ -18,27 +18,57 @@ function clean(s?: string | null) {
   return (s ?? "").trim();
 }
 
+// ✅ accepts undefined safely
+function pickImage(it?: NewsItem | null) {
+  const img = clean(it?.imageUrl);
+  if (img) return img;
+
+  const icon = clean(it?.sourceIconUrl);
+  if (icon) return icon;
+
+  return "/placeholder-news.jpg";
+}
+
 export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: Props) {
+  const safeItems = useMemo(() => (items ?? []).filter(Boolean), [items]);
+
   const [index, setIndex] = useState(0);
 
+  // ✅ clamp index whenever safeItems changes
   useEffect(() => {
-    if (items.length <= 1) return;
-    const id = setInterval(() => setIndex((i) => (i + 1) % items.length), intervalMs);
+    if (!safeItems.length) {
+      setIndex(0);
+      return;
+    }
+    if (index >= safeItems.length) setIndex(0);
+  }, [safeItems.length, index]);
+
+  // ✅ autoplay only if > 1
+  useEffect(() => {
+    if (safeItems.length <= 1) return;
+
+    const id = setInterval(() => {
+      setIndex((i) => {
+        const len = safeItems.length;
+        if (len <= 1) return 0;
+        return (i + 1) % len;
+      });
+    }, intervalMs);
+
     return () => clearInterval(id);
-  }, [items.length, intervalMs]);
+  }, [safeItems.length, intervalMs]);
 
-  useEffect(() => {
-    if (index >= items.length) setIndex(0);
-  }, [index, items.length]);
+  if (!safeItems.length) return null;
 
-  if (!items?.length) return null;
+  // ✅ never undefined
+  const item = safeItems[index] ?? safeItems[0];
+  if (!item) return null;
 
-  const item = items[index];
-  const image = clean(item.imageUrl) ? item.imageUrl! : "/placeholder-news.jpg";
+  const image = pickImage(item);
   const sourceIcon = clean(item.sourceIconUrl) ? item.sourceIconUrl! : undefined;
   const isVideo = item.kind === 2;
 
-  const fadeKey = useMemo(() => `${item.id}:${index}`, [item.id, index]);
+  const fadeKey = useMemo(() => `${clean(item.id)}:${index}`, [item.id, index]);
 
   return (
     <Box
@@ -65,7 +95,6 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
             `,
             backgroundSize: "cover",
             backgroundPosition: "center",
-            // ✅ reserve space so dots NEVER overlap the source row
             pb: { xs: 7, sm: 7, md: 7 },
             px: { xs: 1.5, sm: 2.25, md: 3 },
             pt: { xs: 1.5, sm: 2.25, md: 3 },
@@ -74,7 +103,6 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
             justifyContent: "flex-end",
           }}
         >
-          {/* Bottom content area only (safe zone) */}
           <Typography
             sx={{
               color: "common.white",
@@ -90,7 +118,7 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
               maxWidth: { xs: "100%", md: "92%" },
             }}
           >
-            {item.title}
+            {clean(item.title) || "(Untitled)"}
           </Typography>
 
           <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
@@ -104,7 +132,7 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
                 flex: "0 0 auto",
               }}
             >
-              {!sourceIcon && item.sourceName?.[0]}
+              {clean(item.sourceName)?.[0] ?? "S"}
             </Avatar>
 
             <Typography
@@ -120,13 +148,13 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
                 flex: 1,
               }}
             >
-              {item.sourceName}
+              {clean(item.sourceName) || "Source"}
             </Typography>
           </Stack>
         </Box>
       </Fade>
 
-      {/* ✅ Top-left badges (separate from title area => no mixing) */}
+      {/* top-left */}
       <Box
         sx={{
           position: "absolute",
@@ -145,10 +173,7 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
         }}
       >
         <FlashOnIcon sx={{ color: "error.main", fontSize: 18 }} />
-        <Typography
-          variant="caption"
-          sx={{ color: "error.main", fontWeight: 950, letterSpacing: 0.6 }}
-        >
+        <Typography variant="caption" sx={{ color: "error.main", fontWeight: 950, letterSpacing: 0.6 }}>
           BREAKING
         </Typography>
         {isVideo && (
@@ -156,15 +181,12 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
             label="YouTube"
             color="error"
             size="small"
-            sx={{
-              height: 20,
-              "& .MuiChip-label": { fontWeight: 900, fontSize: 10.5, px: 0.8 },
-            }}
+            sx={{ height: 20, "& .MuiChip-label": { fontWeight: 900, fontSize: 10.5, px: 0.8 } }}
           />
         )}
       </Box>
 
-      {/* ✅ Top-right time pill */}
+      {/* top-right time */}
       <Box
         sx={{
           position: "absolute",
@@ -182,22 +204,18 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
         <TimeAgo
           iso={item.publishedAt}
           variant="caption"
-          sx={{
-            color: "rgba(255,255,255,.92)",
-            fontWeight: 900,
-            fontSize: { xs: 11, md: 12 },
-          }}
+          sx={{ color: "rgba(255,255,255,.92)", fontWeight: 900, fontSize: { xs: 11, md: 12 } }}
         />
       </Box>
 
-      {/* Arrows */}
-      {items.length > 1 && (
+      {/* arrows + dots */}
+      {safeItems.length > 1 && (
         <>
           <IconButton
-            onClick={() => setIndex((i) => (i - 1 + items.length) % items.length)}
+            onClick={() => setIndex((i) => (i - 1 + safeItems.length) % safeItems.length)}
             sx={{
               position: "absolute",
-              top: { xs: "46%", md: "50%" }, // ✅ slightly higher on mobile
+              top: { xs: "46%", md: "50%" },
               left: { xs: 8, md: 14 },
               transform: "translateY(-50%)",
               bgcolor: "rgba(255,255,255,.92)",
@@ -212,7 +230,7 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
           </IconButton>
 
           <IconButton
-            onClick={() => setIndex((i) => (i + 1) % items.length)}
+            onClick={() => setIndex((i) => (i + 1) % safeItems.length)}
             sx={{
               position: "absolute",
               top: { xs: "46%", md: "50%" },
@@ -229,7 +247,6 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
             <ArrowForwardIosIcon fontSize="small" />
           </IconButton>
 
-          {/* Dots (bottom center, safe) */}
           <Box
             sx={{
               position: "absolute",
@@ -246,7 +263,7 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
               zIndex: 12,
             }}
           >
-            {items.slice(0, Math.min(items.length, 8)).map((_, i) => (
+            {safeItems.slice(0, Math.min(safeItems.length, 8)).map((_, i) => (
               <Box
                 key={i}
                 sx={{

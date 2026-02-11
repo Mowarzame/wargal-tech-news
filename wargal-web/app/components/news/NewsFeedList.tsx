@@ -17,6 +17,20 @@ type Props = {
   onOpen: (it: NewsItem) => void;
 };
 
+function clean(s?: string | null) {
+  return (s ?? "").trim();
+}
+
+function pickImage(it: NewsItem) {
+  const img = clean(it.imageUrl);
+  if (img) return img;
+
+  const icon = clean(it.sourceIconUrl);
+  if (icon) return icon;
+
+  return "/placeholder-news.jpg";
+}
+
 export default function NewsFeedList({ items, onOpen }: Props) {
   if (!items?.length) {
     return (
@@ -29,79 +43,47 @@ export default function NewsFeedList({ items, onOpen }: Props) {
   return (
     <Stack spacing={1.5} sx={{ p: 0 }}>
       {items.map((it) => {
-        const img =
-          it.imageUrl && it.imageUrl.trim().length > 0 ? it.imageUrl : undefined;
-
-        const icon =
-          it.sourceIconUrl && it.sourceIconUrl.trim().length > 0
-            ? it.sourceIconUrl
-            : undefined;
+        const img = pickImage(it); // ✅ always available
+        const icon = clean(it.sourceIconUrl) ? it.sourceIconUrl! : undefined;
 
         return (
           <Card
             key={it.id}
             variant="outlined"
-            sx={{
-              borderRadius: 2,
-              overflow: "hidden",
-              cursor: "pointer",
-              transition: "0.15s",
-              "&:hover": { boxShadow: 2, borderColor: "rgba(0,0,0,.18)" },
-            }}
+            sx={{ borderRadius: 2, overflow: "hidden", cursor: "pointer" }}
             onClick={() => onOpen(it)}
           >
             <Box sx={{ display: "flex" }}>
-              {img ? (
-                <CardMedia
-                  component="img"
-                  image={img}
-                  alt={it.title}
-                  sx={{ width: 150, height: 112, objectFit: "cover" }}
-                />
-              ) : (
-                <Box sx={{ width: 150, height: 112, bgcolor: "grey.100" }} />
-              )}
+              {/* ✅ image always shown */}
+              <CardMedia
+                component="img"
+                image={img}
+                alt={it.title}
+                sx={{ width: 140, height: 110, objectFit: "cover" }}
+              />
 
               <CardContent sx={{ flex: 1, py: 1.2 }}>
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1,
-                    mb: 0.6,
-                    minWidth: 0,
-                  }}
-                >
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
                   <Avatar src={icon} sx={{ width: 22, height: 22 }}>
                     {(it.sourceName?.[0] ?? "S").toUpperCase()}
                   </Avatar>
 
-                  <Typography variant="body2" fontWeight={900} noWrap>
+                  <Typography variant="body2" fontWeight={800} noWrap>
                     {it.sourceName}
                   </Typography>
 
                   {it.kind === 2 && (
-                    <Chip
-                      label="Video"
-                      size="small"
-                      color="error"
-                      sx={{ height: 20 }}
-                    />
+                    <Chip label="Video" size="small" color="error" sx={{ height: 20 }} />
                   )}
 
                   <Box sx={{ flex: 1 }} />
 
-                  {/* ✅ visible on all sizes */}
-                  <TimeAgo
-                    iso={it.publishedAt}
-                    variant="caption"
-                    sx={{ color: "text.secondary", fontWeight: 800 }}
-                  />
+                  <TimeAgo iso={it.publishedAt} />
                 </Box>
 
                 <Typography
                   variant="subtitle1"
-                  fontWeight={950}
+                  fontWeight={900}
                   sx={{
                     lineHeight: 1.2,
                     display: "-webkit-box",

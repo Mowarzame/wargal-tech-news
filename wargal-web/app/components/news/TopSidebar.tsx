@@ -1,22 +1,30 @@
 "use client";
 
-import {
-  Box,
-  Typography,
-  Stack,
-  Avatar,
-  Divider,
-} from "@mui/material";
+import { Box, Typography, Stack, Avatar, Divider } from "@mui/material";
 import { NewsItem } from "@/app/types/news";
 
 type Props = {
   title: string;
-  items: NewsItem[];
+  items: NewsItem[] | null | undefined;
   onOpen: (it: NewsItem) => void;
 };
 
+function clean(s?: string | null) {
+  return (s ?? "").trim();
+}
+
+function pickThumb(it?: NewsItem | null) {
+  const img = clean(it?.imageUrl);
+  if (img) return img;
+
+  const icon = clean(it?.sourceIconUrl);
+  if (icon) return icon;
+
+  return ""; // sidebar allows empty
+}
+
 function timeAgoFromIso(iso?: string | null) {
-  const s = (iso ?? "").trim();
+  const s = clean(iso);
   if (!s) return "";
 
   const dt = new Date(s);
@@ -45,7 +53,8 @@ function timeAgoFromIso(iso?: string | null) {
 }
 
 export default function TopSideBar({ title, items, onOpen }: Props) {
-  if (!items?.length) return null;
+  const list = (items ?? []).filter(Boolean);
+  if (!list.length) return null;
 
   return (
     <Box
@@ -64,15 +73,15 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
       <Divider />
 
       <Stack spacing={0} sx={{ py: 0.5 }}>
-        {items.map((it, idx) => {
-          const thumb = (it.imageUrl ?? "").trim(); // ✅ may be empty
-          const sourceIcon = (it.sourceIconUrl ?? "").trim();
-          const ago = timeAgoFromIso(it.publishedAt);
+        {list.map((it, idx) => {
+          const thumb = pickThumb(it);
+          const sourceIcon = clean(it?.sourceIconUrl);
+          const ago = timeAgoFromIso(it?.publishedAt);
 
           return (
-            <Box key={it.id}>
+            <Box key={clean(it?.id) || `${idx}`}>
               <Box
-                onClick={() => onOpen(it)}
+                onClick={() => it && onOpen(it)}
                 sx={{
                   cursor: "pointer",
                   px: 2,
@@ -83,7 +92,6 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   "&:hover": { bgcolor: "grey.50" },
                 }}
               >
-                {/* ✅ thumbnail */}
                 <Box
                   sx={{
                     width: 54,
@@ -111,32 +119,22 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                       overflow: "hidden",
                     }}
                   >
-                    {it.title}
+                    {clean(it?.title) || "(Untitled)"}
                   </Typography>
 
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    alignItems="center"
-                    sx={{ mt: 0.75, minWidth: 0 }}
-                  >
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75, minWidth: 0 }}>
                     <Avatar
-                      src={sourceIcon ? sourceIcon : undefined} // ✅ never null
+                      src={sourceIcon ? sourceIcon : undefined}
                       sx={{ width: 18, height: 18 }}
                     >
-                      {(it.sourceName?.[0] ?? "S").toUpperCase()}
+                      {(clean(it?.sourceName)?.[0] ?? "S").toUpperCase()}
                     </Avatar>
 
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      noWrap
-                      sx={{ flex: 1, minWidth: 0 }}
-                    >
-                      {it.sourceName}
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1, minWidth: 0 }}>
+                      {clean(it?.sourceName) || "Source"}
                     </Typography>
 
-                    {it.kind === 2 && (
+                    {it?.kind === 2 && (
                       <Box
                         sx={{
                           px: 0.8,
@@ -155,18 +153,14 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   </Stack>
 
                   {!!ago && (
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ mt: 0.5, display: "block" }}
-                    >
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
                       {ago}
                     </Typography>
                   )}
                 </Box>
               </Box>
 
-              {idx !== items.length - 1 && <Divider />}
+              {idx !== list.length - 1 && <Divider />}
             </Box>
           );
         })}
