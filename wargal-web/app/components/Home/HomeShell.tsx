@@ -15,6 +15,8 @@ import {
   Drawer,
   Button,
   IconButton,
+  Chip,
+  Stack,
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -81,6 +83,9 @@ function SourcesPanel({
   selectedSet,
   toggleSource,
   showTitle,
+  categories,
+  selectedCategory,
+  setSelectedCategory,
 }: {
   q: string;
   setQ: (v: string) => void;
@@ -91,10 +96,12 @@ function SourcesPanel({
   selectedSet: Set<string>;
   toggleSource: (id: string) => void;
   showTitle: boolean;
+  categories: string[];
+  selectedCategory: string;
+  setSelectedCategory: (v: string) => void;
 }) {
   return (
     <>
-      {/* header (fixed inside card/drawer) */}
       <Box sx={{ p: 1.5 }}>
         {showTitle && (
           <Typography fontWeight={900} mb={1}>
@@ -116,6 +123,38 @@ function SourcesPanel({
             ),
           }}
         />
+
+        {/* Category filter chips */}
+        <Box sx={{ mt: 1 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              overflowX: "auto",
+              pb: 0.5,
+              "&::-webkit-scrollbar": { height: 6 },
+            }}
+          >
+            {categories.map((cat) => {
+              const active = cat === selectedCategory;
+              return (
+                <Chip
+                  key={cat}
+                  label={cat}
+                  clickable
+                  onClick={() => setSelectedCategory(cat)}
+                  variant={active ? "filled" : "outlined"}
+                  size="small"
+                  sx={{
+                    fontWeight: 900,
+                    borderRadius: 999,
+                    flexShrink: 0,
+                  }}
+                />
+              );
+            })}
+          </Stack>
+        </Box>
 
         <Box sx={{ display: "flex", alignItems: "center", mt: 1 }}>
           <Typography
@@ -141,7 +180,6 @@ function SourcesPanel({
 
       <Divider />
 
-      {/* list (scroll) */}
       <Box sx={{ flex: 1, overflow: "auto", p: 1 }}>
         {filteredSources.map((s) => {
           const id = String(s.id);
@@ -195,6 +233,9 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const [q, setQ] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]); // empty => all
 
+  // ✅ Category filter for sources
+  const [sourceCategory, setSourceCategory] = useState<string>("All");
+
   // ✅ Mobile sources drawer state
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const openSources = () => setSourcesOpen(true);
@@ -242,13 +283,35 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     };
   }, []);
 
+  // Build category list from sources (stable)
+  const sourceCategories = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of allSources ?? []) {
+      const c = clean(s?.category) || "News";
+      set.add(c);
+    }
+    const list = Array.from(set).sort((a, b) => a.localeCompare(b));
+    return ["All", ...list];
+  }, [allSources]);
+
+  // Ensure selected category remains valid when sources change
+  useEffect(() => {
+    if (!sourceCategories.includes(sourceCategory)) setSourceCategory("All");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceCategories.join("|")]);
+
   const filteredSources = useMemo(() => {
     const query = clean(q).toLowerCase();
     const list = (allSources ?? []).filter(Boolean);
 
-    if (!query) return list;
-    return list.filter((s) => clean(s.name).toLowerCase().includes(query));
-  }, [allSources, q]);
+    const byCat =
+      sourceCategory === "All"
+        ? list
+        : list.filter((s) => (clean(s.category) || "News") === sourceCategory);
+
+    if (!query) return byCat;
+    return byCat.filter((s) => clean(s.name).toLowerCase().includes(query));
+  }, [allSources, q, sourceCategory]);
 
   const filteredItems = useMemo(() => {
     const list = (allItems ?? []).filter(Boolean);
@@ -263,10 +326,12 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
   const sorted = useMemo(() => {
     const list = [...filteredItems];
+    // ISO string sort (safe, no Date hydration issues)
     list.sort((a, b) => clean(b?.publishedAt).localeCompare(clean(a?.publishedAt)));
     return list;
   }, [filteredItems]);
 
+  // Sections
   const breakingItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
@@ -282,6 +347,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
   const highlightItems = useMemo(() => breakingItems.slice(0, 6), [breakingItems]);
 
+  // ✅ Latest reduced to 7
   const latestItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
@@ -296,7 +362,6 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   }, [sorted]);
 
   const moreStories = useMemo(() => sorted.slice(6, 30), [sorted]);
-
   const emptySingleSource = isSingle && sorted.length === 0;
 
   const toggleSource = (id: string) => {
@@ -311,7 +376,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   return (
     <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }}>
       <Box sx={{ px: { xs: 1.5, md: 2 }, py: 2 }}>
-        {/* ✅ Small UI only: row with selection count (left) + Sources button (right) */}
+        {/* ✅ Small UI only: selection count (left) + Sources button (right) */}
         <Box
           sx={{
             display: { xs: "flex", lg: "none" },
@@ -321,6 +386,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
           }}
         >
           <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
+            {sourceCategory === "All" ? "All categories" : sourceCategory} ·{" "}
             {isAll ? "All sources" : `${selectedIds.length} selected`}
           </Typography>
 
@@ -355,7 +421,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
             },
           }}
         >
-          {/* ✅ drawer header keeps title ONCE */}
+          {/* drawer header keeps title ONCE */}
           <Box sx={{ p: 1.5, display: "flex", alignItems: "center", gap: 1 }}>
             <Typography fontWeight={950} sx={{ flex: 1 }}>
               Sources
@@ -368,7 +434,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
           <Divider />
 
-          {/* ✅ showTitle=false removes the double Sources title */}
+          {/* showTitle=false removes double title in drawer */}
           <SourcesPanel
             q={q}
             setQ={setQ}
@@ -379,9 +445,13 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
             selectedSet={selectedSet}
             toggleSource={toggleSource}
             showTitle={false}
+            categories={sourceCategories}
+            selectedCategory={sourceCategory}
+            setSelectedCategory={setSourceCategory}
           />
         </Drawer>
 
+        {/* Grid layout = screenshot: Left / Center / Right */}
         <Box
           sx={{
             display: "grid",
@@ -423,6 +493,9 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                 selectedSet={selectedSet}
                 toggleSource={toggleSource}
                 showTitle={true}
+                categories={sourceCategories}
+                selectedCategory={sourceCategory}
+                setSelectedCategory={setSourceCategory}
               />
             </Box>
           </Box>
