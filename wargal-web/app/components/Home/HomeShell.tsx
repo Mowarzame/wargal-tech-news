@@ -1,3 +1,6 @@
+// ==============================
+// File: wargal-web/app/components/Home/HomeShell.tsx
+// ==============================
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -9,8 +12,13 @@ import {
   Checkbox,
   Divider,
   Avatar,
+  Drawer,
+  Button,
+  IconButton,
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
+import MenuIcon from "@mui/icons-material/Menu";
+import CloseIcon from "@mui/icons-material/Close";
 
 import { fetchFeedItems, fetchFeedSources } from "@/app/lib/api";
 import { NewsItem, NewsSource } from "@/app/types/news";
@@ -63,8 +71,120 @@ function mergeTop(prev: NewsItem[], next: NewsItem[]) {
   return out;
 }
 
+function SourcesPanel({
+  q,
+  setQ,
+  isAll,
+  selectedIds,
+  clearSelection,
+  filteredSources,
+  selectedSet,
+  toggleSource,
+  showTitle,
+}: {
+  q: string;
+  setQ: (v: string) => void;
+  isAll: boolean;
+  selectedIds: string[];
+  clearSelection: () => void;
+  filteredSources: NewsSource[];
+  selectedSet: Set<string>;
+  toggleSource: (id: string) => void;
+  showTitle: boolean;
+}) {
+  return (
+    <>
+      {/* header (fixed inside card/drawer) */}
+      <Box sx={{ p: 1.5 }}>
+        {showTitle && (
+          <Typography fontWeight={900} mb={1}>
+            Sources
+          </Typography>
+        )}
+
+        <TextField
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search…"
+          size="small"
+          fullWidth
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" />
+              </InputAdornment>
+            ),
+          }}
+        />
+
+        <Box sx={{ display: "flex", alignItems: "center", mt: 1 }}>
+          <Typography
+            onClick={clearSelection}
+            sx={{
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 900,
+              color: "text.secondary",
+              userSelect: "none",
+            }}
+          >
+            CLEAR
+          </Typography>
+
+          <Box sx={{ flex: 1 }} />
+
+          <Typography variant="caption" color="text.secondary">
+            {isAll ? "All" : `${selectedIds.length}`}
+          </Typography>
+        </Box>
+      </Box>
+
+      <Divider />
+
+      {/* list (scroll) */}
+      <Box sx={{ flex: 1, overflow: "auto", p: 1 }}>
+        {filteredSources.map((s) => {
+          const id = String(s.id);
+          const checked = selectedSet.has(id);
+
+          return (
+            <Box
+              key={id}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                px: 1,
+                py: 1,
+                borderRadius: 2,
+                cursor: "pointer",
+                "&:hover": { bgcolor: "grey.50" },
+              }}
+              onClick={() => toggleSource(id)}
+            >
+              <Avatar src={s.iconUrl ?? undefined} sx={{ width: 26, height: 26 }}>
+                {(clean(s.name)?.[0] ?? "S").toUpperCase()}
+              </Avatar>
+
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography fontWeight={800} fontSize={13} noWrap>
+                  {clean(s.name) || "Source"}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  {clean(s.category) || "News"}
+                </Typography>
+              </Box>
+
+              <Checkbox checked={checked} />
+            </Box>
+          );
+        })}
+      </Box>
+    </>
+  );
+}
+
 export default function HomeShell({ items, sources, categoryBySourceId }: Props) {
-  // ✅ hooks always run (no conditional hooks, no early returns above)
   const [allItems, setAllItems] = useState<NewsItem[]>((items ?? []).filter(Boolean));
   const [allSources, setAllSources] = useState<NewsSource[]>(
     (sources ?? []).filter(Boolean).filter((s) => s.isActive !== false)
@@ -74,6 +194,11 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
   const [q, setQ] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]); // empty => all
+
+  // ✅ Mobile sources drawer state
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const openSources = () => setSourcesOpen(true);
+  const closeSources = () => setSourcesOpen(false);
 
   const selectedSet = useMemo(() => new Set((selectedIds ?? []).map(String)), [selectedIds]);
   const isAll = selectedIds.length === 0;
@@ -138,12 +263,10 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
   const sorted = useMemo(() => {
     const list = [...filteredItems];
-    // ISO string sort (safe, no Date hydration issues)
     list.sort((a, b) => clean(b?.publishedAt).localeCompare(clean(a?.publishedAt)));
     return list;
   }, [filteredItems]);
 
-  // Sections
   const breakingItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
@@ -159,7 +282,6 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
   const highlightItems = useMemo(() => breakingItems.slice(0, 6), [breakingItems]);
 
-  // ✅ Latest reduced to 7
   const latestItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
@@ -189,7 +311,77 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   return (
     <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }}>
       <Box sx={{ px: { xs: 1.5, md: 2 }, py: 2 }}>
-        {/* Grid layout = screenshot: Left / Center / Right */}
+        {/* ✅ Small UI only: row with selection count (left) + Sources button (right) */}
+        <Box
+          sx={{
+            display: { xs: "flex", lg: "none" },
+            alignItems: "center",
+            gap: 1,
+            mb: 1.5,
+          }}
+        >
+          <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
+            {isAll ? "All sources" : `${selectedIds.length} selected`}
+          </Typography>
+
+          <Box sx={{ flex: 1 }} />
+
+          <Button
+            onClick={openSources}
+            variant="contained"
+            startIcon={<MenuIcon />}
+            sx={{
+              textTransform: "none",
+              fontWeight: 900,
+              borderRadius: 999,
+              flexShrink: 0,
+            }}
+          >
+            Sources
+          </Button>
+        </Box>
+
+        {/* Mobile: Sources Drawer */}
+        <Drawer
+          open={sourcesOpen}
+          onClose={closeSources}
+          anchor="left"
+          PaperProps={{
+            sx: {
+              width: { xs: "86vw", sm: 360 },
+              maxWidth: "100%",
+              display: "flex",
+              flexDirection: "column",
+            },
+          }}
+        >
+          {/* ✅ drawer header keeps title ONCE */}
+          <Box sx={{ p: 1.5, display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography fontWeight={950} sx={{ flex: 1 }}>
+              Sources
+            </Typography>
+
+            <IconButton onClick={closeSources} aria-label="Close sources">
+              <CloseIcon />
+            </IconButton>
+          </Box>
+
+          <Divider />
+
+          {/* ✅ showTitle=false removes the double Sources title */}
+          <SourcesPanel
+            q={q}
+            setQ={setQ}
+            isAll={isAll}
+            selectedIds={selectedIds}
+            clearSelection={clearSelection}
+            filteredSources={filteredSources}
+            selectedSet={selectedSet}
+            toggleSource={toggleSource}
+            showTitle={false}
+          />
+        </Drawer>
+
         <Box
           sx={{
             display: "grid",
@@ -198,14 +390,14 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
             alignItems: "start",
           }}
         >
-          {/* LEFT: Sources (desktop) — ✅ now fixed/sticky like Latest */}
+          {/* LEFT: Sources (desktop) */}
           <Box
             sx={{
               display: { xs: "none", lg: "block" },
               position: "sticky",
               top: 86,
               alignSelf: "start",
-              height: "calc(100vh - 110px)", // keeps it fixed and scrollable inside
+              height: "calc(100vh - 110px)",
               minHeight: 420,
             }}
           >
@@ -221,96 +413,22 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                 flexDirection: "column",
               }}
             >
-              {/* header (fixed inside card) */}
-              <Box sx={{ p: 1.5 }}>
-                <Typography fontWeight={900} mb={1}>
-                  Sources
-                </Typography>
-
-                <TextField
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search…"
-                  size="small"
-                  fullWidth
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon fontSize="small" />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-
-                <Box sx={{ display: "flex", alignItems: "center", mt: 1 }}>
-                  <Typography
-                    onClick={clearSelection}
-                    sx={{
-                      cursor: "pointer",
-                      fontSize: 12,
-                      fontWeight: 900,
-                      color: "text.secondary",
-                      userSelect: "none",
-                    }}
-                  >
-                    CLEAR
-                  </Typography>
-
-                  <Box sx={{ flex: 1 }} />
-
-                  <Typography variant="caption" color="text.secondary">
-                    {isAll ? "All" : `${selectedIds.length}`}
-                  </Typography>
-                </Box>
-              </Box>
-
-              <Divider />
-
-              {/* list (scroll inside card) */}
-              <Box sx={{ flex: 1, overflow: "auto", p: 1 }}>
-                {filteredSources.map((s) => {
-                  const id = String(s.id);
-                  const checked = selectedSet.has(id);
-
-                  return (
-                    <Box
-                      key={id}
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 1,
-                        px: 1,
-                        py: 1,
-                        borderRadius: 2,
-                        cursor: "pointer",
-                        "&:hover": { bgcolor: "grey.50" },
-                      }}
-                      onClick={() => toggleSource(id)}
-                    >
-                      <Avatar src={s.iconUrl ?? undefined} sx={{ width: 26, height: 26 }}>
-                        {(clean(s.name)?.[0] ?? "S").toUpperCase()}
-                      </Avatar>
-
-                      <Box sx={{ minWidth: 0, flex: 1 }}>
-                        <Typography fontWeight={800} fontSize={13} noWrap>
-                          {clean(s.name) || "Source"}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" noWrap>
-                          {clean(s.category) || "News"}
-                        </Typography>
-                      </Box>
-
-                      <Checkbox checked={checked} />
-                    </Box>
-                  );
-                })}
-              </Box>
+              <SourcesPanel
+                q={q}
+                setQ={setQ}
+                isAll={isAll}
+                selectedIds={selectedIds}
+                clearSelection={clearSelection}
+                filteredSources={filteredSources}
+                selectedSet={selectedSet}
+                toggleSource={toggleSource}
+                showTitle={true}
+              />
             </Box>
           </Box>
 
           {/* CENTER */}
           <Box sx={{ minWidth: 0 }}>
-            {/* Empty state ONLY for single selected source */}
             {emptySingleSource ? (
               <Box
                 sx={{
@@ -330,25 +448,29 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
               </Box>
             ) : (
               <>
-                {/* BREAKING */}
                 <Typography variant="h6" fontWeight={900} sx={{ mb: 1 }}>
                   Breaking
                 </Typography>
                 <BreakingSlideshow items={breakingItems} onOpen={(it) => onOpen(it)} />
 
-                {/* HIGHLIGHTS */}
                 <Typography variant="h6" fontWeight={900} sx={{ mt: 2, mb: 1 }}>
                   Highlights
                 </Typography>
                 <NewsGridHighlights items={highlightItems} onOpen={(it) => onOpen(it)} />
 
-                {/* MORE STORIES */}
-                <Typography variant="h6" fontWeight={900} sx={{ mt: 2, mb: 1 }}>
-                  More Stories
-                </Typography>
-                <FourUpRow items={moreStories} onOpen={(it) => onOpen(it)} />
+                {/* ✅ Small screen: Latest here */}
+                <Box sx={{ mt: 2, display: { xs: "block", lg: "none" } }}>
+                  <TopSideBar title="Latest" items={latestItems} onOpen={(it) => onOpen(it)} />
+                </Box>
 
-                {/* CATEGORIES */}
+                {/* ✅ Desktop: More Stories here */}
+                <Box sx={{ display: { xs: "none", lg: "block" } }}>
+                  <Typography variant="h6" fontWeight={900} sx={{ mt: 2, mb: 1 }}>
+                    More Stories
+                  </Typography>
+                  <FourUpRow items={moreStories} onOpen={(it) => onOpen(it)} />
+                </Box>
+
                 <Typography variant="h6" fontWeight={900} sx={{ mt: 2, mb: 1 }}>
                   Categories
                 </Typography>
@@ -360,7 +482,6 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                   onOpen={(it) => onOpen(it)}
                 />
 
-                {/* ALL NEWS (Load more) */}
                 <Typography variant="h6" fontWeight={900} sx={{ mt: 2, mb: 1 }}>
                   All News
                 </Typography>
@@ -373,7 +494,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
             )}
           </Box>
 
-          {/* RIGHT: Latest (sticky) */}
+          {/* RIGHT: Latest (desktop sticky) */}
           <Box
             sx={{
               position: "sticky",
@@ -386,12 +507,14 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
           </Box>
         </Box>
 
-        {/* Mobile Latest at bottom */}
+        {/* ✅ Small screen: More Stories moved to bottom */}
         <Box sx={{ mt: 2, display: { xs: "block", lg: "none" } }}>
-          <TopSideBar title="Latest" items={latestItems} onOpen={(it) => onOpen(it)} />
+          <Typography variant="h6" fontWeight={900} sx={{ mb: 1 }}>
+            More Stories
+          </Typography>
+          <FourUpRow items={moreStories} onOpen={(it) => onOpen(it)} />
         </Box>
 
-        {/* footer refresh indicator */}
         <Box sx={{ mt: 2 }}>
           <Typography variant="caption" color="text.secondary">
             {refreshing ? "Auto-refreshing…" : "Auto-refresh every 2 minutes"}

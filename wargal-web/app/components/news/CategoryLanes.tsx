@@ -101,7 +101,7 @@ function CategoryLane({
   }, [idx, featuredPool.length]);
 
   const featured = featuredPool[idx];
-  const featuredImage = clean(featured.imageUrl) ? featured.imageUrl! : "/placeholder-news.jpg";
+  const featuredImage = clean(featured?.imageUrl) ? featured?.imageUrl! : "/placeholder-news.jpg";
 
   return (
     <Box
@@ -134,7 +134,7 @@ function CategoryLane({
         <Box
           component="img"
           src={featuredImage}
-          alt={featured.title}
+          alt={featured?.title}
           sx={{
             width: "100%",
             height: "100%",
@@ -168,12 +168,12 @@ function CategoryLane({
               textShadow: "0 2px 14px rgba(0,0,0,.55)",
             }}
           >
-            {featured.title}
+            {featured?.title}
           </Typography>
 
           <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
             <Avatar
-              src={featured.sourceIconUrl ?? undefined}
+              src={featured?.sourceIconUrl ?? undefined}
               sx={{
                 width: 22,
                 height: 22,
@@ -181,7 +181,7 @@ function CategoryLane({
                 border: "1px solid rgba(255,255,255,.25)",
               }}
             >
-              {(featured.sourceName?.[0] ?? "S").toUpperCase()}
+              {(featured?.sourceName?.[0] ?? "S").toUpperCase()}
             </Avatar>
 
             <Typography
@@ -195,25 +195,25 @@ function CategoryLane({
                 whiteSpace: "nowrap",
               }}
             >
-              {featured.sourceName}
+              {featured?.sourceName}
             </Typography>
 
             <TimeAgo
-              iso={featured.publishedAt}
+              iso={featured?.publishedAt}
               variant="caption"
               sx={{ color: "rgba(255,255,255,.92)", fontWeight: 900 }}
             />
 
-            {featured.kind === 2 && <Chip label="Video" size="small" color="error" />}
+            {featured?.kind === 2 && <Chip label="Video" size="small" color="error" />}
           </Stack>
         </Box>
 
-        {featuredPool.length > 1 && (
+        {featuredPool?.length > 1 && (
           <>
             <IconButton
               onClick={(e) => {
                 e.stopPropagation();
-                setIdx((i) => (i - 1 + featuredPool.length) % featuredPool.length);
+                setIdx((i) => (i - 1 + featuredPool?.length) % featuredPool?.length);
               }}
               sx={{
                 position: "absolute",
@@ -234,7 +234,7 @@ function CategoryLane({
             <IconButton
               onClick={(e) => {
                 e.stopPropagation();
-                setIdx((i) => (i + 1) % featuredPool.length);
+                setIdx((i) => (i + 1) % featuredPool?.length);
               }}
               sx={{
                 position: "absolute",

@@ -1,3 +1,6 @@
+// ==============================
+// File: wargal-web/app/components/breaking/BreakingSlideshow.tsx
+// ==============================
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -18,7 +21,6 @@ function clean(s?: string | null) {
   return (s ?? "").trim();
 }
 
-// ✅ accepts undefined safely
 function pickImage(it?: NewsItem | null) {
   const img = clean(it?.imageUrl);
   if (img) return img;
@@ -31,10 +33,8 @@ function pickImage(it?: NewsItem | null) {
 
 export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: Props) {
   const safeItems = useMemo(() => (items ?? []).filter(Boolean), [items]);
-
   const [index, setIndex] = useState(0);
 
-  // ✅ clamp index whenever safeItems changes
   useEffect(() => {
     if (!safeItems.length) {
       setIndex(0);
@@ -43,7 +43,6 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
     if (index >= safeItems.length) setIndex(0);
   }, [safeItems.length, index]);
 
-  // ✅ autoplay only if > 1
   useEffect(() => {
     if (safeItems.length <= 1) return;
 
@@ -60,7 +59,6 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
 
   if (!safeItems.length) return null;
 
-  // ✅ never undefined
   const item = safeItems[index] ?? safeItems[0];
   if (!item) return null;
 
@@ -154,7 +152,6 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
         </Box>
       </Fade>
 
-      {/* top-left */}
       <Box
         sx={{
           position: "absolute",
@@ -186,7 +183,6 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
         )}
       </Box>
 
-      {/* top-right time */}
       <Box
         sx={{
           position: "absolute",
@@ -208,7 +204,6 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
         />
       </Box>
 
-      {/* arrows + dots */}
       {safeItems.length > 1 && (
         <>
           <IconButton
