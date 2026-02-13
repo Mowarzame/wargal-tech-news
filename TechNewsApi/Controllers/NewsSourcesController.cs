@@ -20,14 +20,14 @@ namespace TechNewsApi.Controllers
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
             => Ok(await _repo.GetByIdAsync(id));
-        [Authorize]
+ 
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] NewsSourceCreateDto dto)
         {
             var res = await _repo.CreateAsync(dto);
             return res.Success ? Ok(res) : BadRequest(res);
         }
-        [Authorize]
+    
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> Update(Guid id, [FromBody] NewsSourceCreateDto dto)
         {
