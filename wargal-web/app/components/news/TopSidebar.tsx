@@ -20,7 +20,7 @@ function pickThumb(it?: NewsItem | null) {
   const icon = clean(it?.sourceIconUrl);
   if (icon) return icon;
 
-  return ""; // sidebar allows empty
+  return "";
 }
 
 function timeAgoFromIso(iso?: string | null) {
@@ -53,7 +53,8 @@ function timeAgoFromIso(iso?: string | null) {
 }
 
 export default function TopSideBar({ title, items, onOpen }: Props) {
-  const list = (items ?? []).filter(Boolean);
+  // ✅ Always cap to 5 items for Latest (and safe for reuse)
+  const list = (items ?? []).filter(Boolean).slice(0, 5);
   if (!list.length) return null;
 
   return (
@@ -92,6 +93,7 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   "&:hover": { bgcolor: "grey.50" },
                 }}
               >
+                {/* Left thumb */}
                 <Box
                   sx={{
                     width: 54,
@@ -107,6 +109,7 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   }}
                 />
 
+                {/* Middle text */}
                 <Box sx={{ minWidth: 0, flex: 1 }}>
                   <Typography
                     fontWeight={800}
@@ -123,13 +126,6 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   </Typography>
 
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75, minWidth: 0 }}>
-                    <Avatar
-                      src={sourceIcon ? sourceIcon : undefined}
-                      sx={{ width: 18, height: 18 }}
-                    >
-                      {(clean(it?.sourceName)?.[0] ?? "S").toUpperCase()}
-                    </Avatar>
-
                     <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1, minWidth: 0 }}>
                       {clean(it?.sourceName) || "Source"}
                     </Typography>
@@ -158,6 +154,20 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                     </Typography>
                   )}
                 </Box>
+
+                {/* ✅ Right: source icon */}
+                <Avatar
+                  src={sourceIcon ? sourceIcon : undefined}
+                  sx={{
+                    width: 28,
+                    height: 28,
+                    flexShrink: 0,
+                    mt: 0.25,
+                    border: "1px solid rgba(0,0,0,0.06)",
+                  }}
+                >
+                  {(clean(it?.sourceName)?.[0] ?? "S").toUpperCase()}
+                </Avatar>
               </Box>
 
               {idx !== list.length - 1 && <Divider />}

@@ -1,83 +1,358 @@
 "use client";
 
 import * as React from "react";
+import { usePathname, useRouter } from "next/navigation";
 import {
   AppBar,
   Avatar,
   Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  Drawer,
+  IconButton,
+  List,
+  ListItemButton,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Tab,
+  Tabs,
   Toolbar,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import AccountCircleIcon from "@mui/icons-material/AccountCircle";
+import MenuIcon from "@mui/icons-material/Menu";
+import CloseIcon from "@mui/icons-material/Close";
+import { useTheme } from "@mui/material/styles";
+
 import { fetchFeedSources } from "@/app/lib/api";
 import { NewsSource } from "@/app/types/news";
-
-export default function Navbar() {
-  const [sources, setSources] = React.useState<NewsSource[]>([]);
+import { useAuth } from "@/app/providers/AuthProvider";
+import GoogleSignInButton from "@/app/components/auth/GoogleSignInButton";
 
 const REFRESH_MS = 2 * 60 * 1000;
 
-React.useEffect(() => {
-  let alive = true;
+function clean(s?: string | null) {
+  return (s ?? "").trim();
+}
 
-  async function load() {
-    try {
-      const list = await fetchFeedSources();
-      if (!alive) return;
+export default function Navbar() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("md")); // ✅ xs/sm only behavior
 
-      const active = (list ?? [])
-        .filter((s) => s?.isActive !== false)
-        .sort((a, b) => (b?.trustLevel ?? 0) - (a?.trustLevel ?? 0));
+  const { isReady, isAuthed, user, logout, loginWithGoogleProfile } = useAuth();
 
-      setSources(active);
-    } catch {
-      // ignore
+  const [sources, setSources] = React.useState<NewsSource[]>([]);
+  const [loginOpen, setLoginOpen] = React.useState(false);
+  const [loginError, setLoginError] = React.useState<string | null>(null);
+
+  // user menu (desktop)
+  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+  const menuOpen = Boolean(anchorEl);
+
+  // mobile hamburger drawer
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      try {
+        const list = await fetchFeedSources();
+        if (!alive) return;
+
+        const active = (list ?? [])
+          .filter((s) => s?.isActive !== false)
+          .sort((a, b) => (b?.trustLevel ?? 0) - (a?.trustLevel ?? 0));
+
+        setSources(active);
+      } catch {
+        // ignore
+      }
     }
-  }
 
-  load();
-  const id = setInterval(load, REFRESH_MS);
+    load();
+    const id = setInterval(load, REFRESH_MS);
 
-  return () => {
-    alive = false;
-    clearInterval(id);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const tabValue = React.useMemo(() => {
+    if (pathname?.startsWith("/community")) return "/community";
+    return "/";
+  }, [pathname]);
+
+  const go = (path: string) => router.push(path);
+
+  const onTabChange = (_: any, v: string) => go(v);
+
+  const openLogin = () => {
+    setLoginError(null);
+    setLoginOpen(true);
   };
-}, []);
 
+  const onOpenMenu = (e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget);
+  const onCloseMenu = () => setAnchorEl(null);
+
+  const doLogout = () => {
+    onCloseMenu();
+    logout();
+    router.push("/");
+  };
+
+  const openDrawer = () => setDrawerOpen(true);
+  const closeDrawer = () => setDrawerOpen(false);
+
+  const doNav = (to: string) => {
+    closeDrawer();
+    router.push(to);
+  };
+
+  const doLogoutMobile = () => {
+    closeDrawer();
+    logout();
+    router.push("/");
+  };
 
   return (
     <AppBar position="sticky" elevation={0}>
       <Toolbar sx={{ minHeight: 64, gap: 2 }}>
-        {/* Left: Logo + Name */}
+        {/* Left: Logo */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
-    <Box
-  component="img"
-  src="/images/logo/correctLogo.png"
-  alt="Wargal"
-  sx={{
-    width: 70,
-    height: 70,
-    borderRadius: 1,
-  }}
-/>
-
+          <Box
+            component="img"
+            src="/images/logo/correctLogo.png"
+            alt="Wargal"
+            sx={{ width: 70, height: 70, borderRadius: 1 }}
+          />
         </Box>
 
-        {/* Center: scrolling icons (marquee) */}
-        <Box sx={{ flex: 1, display: "flex", justifyContent: "center" }}>
+        {/* Center: marquee (show on mobile too, like your screenshot) */}
+        <Box sx={{ flex: 1, display: "flex", justifyContent: "center", minWidth: 0 }}>
           <SourcesMarquee sources={sources} />
         </Box>
 
-        {/* Right: keep space for future actions */}
-        <Box sx={{ width: 40 }} />
+        {/* Desktop tabs (md+ only, authed only) */}
+        <Box
+          sx={{
+            display: { xs: "none", md: isAuthed ? "flex" : "none" },
+            alignItems: "center",
+          }}
+        >
+          <Tabs
+            value={tabValue}
+            onChange={onTabChange}
+            textColor="inherit"
+            indicatorColor="secondary"
+            sx={{
+              minHeight: 40,
+              "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 900 },
+            }}
+          >
+            <Tab label="News" value="/" />
+            <Tab label="Community" value="/community" />
+          </Tabs>
+        </Box>
+
+        {/* Right: auth + mobile hamburger */}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          {!isReady ? (
+            <Box sx={{ width: 120 }} />
+          ) : !isAuthed ? (
+            <>
+              {/* Desktop: Sign in button */}
+              <Button
+                variant="contained"
+                onClick={openLogin}
+                sx={{
+                  display: { xs: "none", md: "inline-flex" },
+                  textTransform: "none",
+                  fontWeight: 900,
+                  borderRadius: 999,
+                }}
+              >
+                Sign in
+              </Button>
+
+              {/* Mobile: hamburger */}
+              <IconButton
+                onClick={openDrawer}
+                sx={{ display: { xs: "inline-flex", md: "none" }, color: "common.white" }}
+                aria-label="Open menu"
+              >
+                <MenuIcon />
+              </IconButton>
+            </>
+          ) : (
+            <>
+              {/* Desktop: user menu */}
+              <Box sx={{ display: { xs: "none", md: "flex" }, alignItems: "center", gap: 1 }}>
+                <IconButton onClick={onOpenMenu} sx={{ color: "common.white" }}>
+                  {clean(user?.profilePictureUrl) ? (
+                    <Avatar src={user?.profilePictureUrl ?? undefined} sx={{ width: 32, height: 32 }} />
+                  ) : (
+                    <AccountCircleIcon />
+                  )}
+                </IconButton>
+
+                <Menu anchorEl={anchorEl} open={menuOpen} onClose={onCloseMenu}>
+                  <MenuItem disabled>
+                    <Box sx={{ minWidth: 220 }}>
+                      <Typography fontWeight={900} noWrap>
+                        {user?.name}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" noWrap>
+                        {user?.email} · {user?.role}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      onCloseMenu();
+                      router.push("/community");
+                    }}
+                  >
+                    Community
+                  </MenuItem>
+                  <MenuItem onClick={doLogout}>Logout</MenuItem>
+                </Menu>
+              </Box>
+
+              {/* Mobile: avatar + hamburger */}
+              <Box sx={{ display: { xs: "flex", md: "none" }, alignItems: "center", gap: 1 }}>
+                {clean(user?.profilePictureUrl) ? (
+                  <Avatar src={user?.profilePictureUrl ?? undefined} sx={{ width: 32, height: 32 }} />
+                ) : (
+                  <Avatar sx={{ width: 32, height: 32 }}>
+                    {(clean(user?.name)?.[0] ?? "U").toUpperCase()}
+                  </Avatar>
+                )}
+
+                <IconButton onClick={openDrawer} sx={{ color: "common.white" }} aria-label="Open menu">
+                  <MenuIcon />
+                </IconButton>
+              </Box>
+            </>
+          )}
+        </Box>
       </Toolbar>
+
+      {/* ✅ Mobile hamburger drawer (xs/sm only) */}
+      <Drawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        anchor="right"
+        PaperProps={{ sx: { width: { xs: "86vw", sm: 340 }, maxWidth: "100%" } }}
+      >
+        <Box sx={{ p: 1.5, display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography fontWeight={950} sx={{ flex: 1 }}>
+            Menu
+          </Typography>
+          <IconButton onClick={closeDrawer} aria-label="Close menu">
+            <CloseIcon />
+          </IconButton>
+        </Box>
+
+        <Divider />
+
+        <List sx={{ py: 0 }}>
+          <ListItemButton onClick={() => doNav("/")}>
+            <ListItemText primary="News" primaryTypographyProps={{ fontWeight: 900 }} />
+          </ListItemButton>
+
+          {/* Community requires auth, but allow navigation anyway (page will enforce auth) */}
+          <ListItemButton onClick={() => doNav("/community")}>
+            <ListItemText primary="Community" primaryTypographyProps={{ fontWeight: 900 }} />
+          </ListItemButton>
+
+          <Divider />
+
+          {!isReady ? null : !isAuthed ? (
+            <ListItemButton
+              onClick={() => {
+                closeDrawer();
+                openLogin();
+              }}
+            >
+              <ListItemText primary="Sign in" primaryTypographyProps={{ fontWeight: 900 }} />
+            </ListItemButton>
+          ) : (
+            <>
+              <Box sx={{ px: 2, py: 1.25 }}>
+                <Typography fontWeight={950} noWrap>
+                  {clean(user?.name) || "User"}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  {clean(user?.email)} · {clean(user?.role)}
+                </Typography>
+              </Box>
+
+              <ListItemButton onClick={doLogoutMobile}>
+                <ListItemText primary="Logout" primaryTypographyProps={{ fontWeight: 900 }} />
+              </ListItemButton>
+            </>
+          )}
+        </List>
+
+        <Box sx={{ p: 2 }}>
+          <Typography variant="caption" color="text.secondary">
+            Wargal News · Somali tech/news aggregator + community
+          </Typography>
+        </Box>
+      </Drawer>
+
+      {/* Google sign-in dialog */}
+      <Dialog open={loginOpen} onClose={() => setLoginOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle sx={{ fontWeight: 950 }}>Sign in with Google</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            This uses Google OAuth (like Flutter) and then calls your API <b>/users/login-google</b>.
+          </Typography>
+
+          <Box sx={{ mt: 2, display: "flex", justifyContent: "center" }}>
+            <GoogleSignInButton
+              onSignedIn={async (profile) => {
+                setLoginError(null);
+                try {
+                  await loginWithGoogleProfile(profile);
+                  setLoginOpen(false);
+                  router.push("/community");
+                } catch (e: any) {
+                  setLoginError(e?.message ?? "Login failed");
+                }
+              }}
+            />
+          </Box>
+
+          {!!loginError && (
+            <Typography color="error" sx={{ mt: 2, fontWeight: 800, textAlign: "center" }}>
+              {loginError}
+            </Typography>
+          )}
+        </DialogContent>
+
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setLoginOpen(false)} sx={{ textTransform: "none", fontWeight: 900 }}>
+            Cancel
+          </Button>
+        </DialogActions>
+      </Dialog>
     </AppBar>
   );
 }
 
 function SourcesMarquee({ sources }: { sources: NewsSource[] }) {
-  // Duplicate list for seamless loop
   const icons = sources.filter((s) => (s.iconUrl ?? "").trim().length > 0);
-
   if (!icons.length) return null;
 
   return (
@@ -89,6 +364,7 @@ function SourcesMarquee({ sources }: { sources: NewsSource[] }) {
         height: 40,
         overflow: "hidden",
         borderRadius: 999,
+        minWidth: 0,
       }}
     >
       {/* Fade masks */}
@@ -101,8 +377,7 @@ function SourcesMarquee({ sources }: { sources: NewsSource[] }) {
           width: 44,
           zIndex: 2,
           pointerEvents: "none",
-          background:
-            "linear-gradient(to right, rgba(21,101,192,1), rgba(21,101,192,0))",
+          background: "linear-gradient(to right, rgba(21,101,192,1), rgba(21,101,192,0))",
         }}
       />
       <Box
@@ -114,32 +389,23 @@ function SourcesMarquee({ sources }: { sources: NewsSource[] }) {
           width: 44,
           zIndex: 2,
           pointerEvents: "none",
-          background:
-            "linear-gradient(to left, rgba(21,101,192,1), rgba(21,101,192,0))",
+          background: "linear-gradient(to left, rgba(21,101,192,1), rgba(21,101,192,0))",
         }}
       />
 
       {/* Track */}
-      <Box
-        sx={{
-          position: "absolute",
-          inset: 0,
-          display: "flex",
-          alignItems: "center",
-        }}
-      >
+      <Box sx={{ position: "absolute", inset: 0, display: "flex", alignItems: "center" }}>
         <Box
           sx={{
             display: "flex",
             alignItems: "center",
-            gap: 1.2,
+            gap: { xs: 0.9, sm: 1.2 },
             pr: 2,
             animation: "wargalMarquee 22s linear infinite",
             "@keyframes wargalMarquee": {
               "0%": { transform: "translateX(0)" },
               "100%": { transform: "translateX(-50%)" },
             },
-            // Two copies to loop seamlessly
             width: "max-content",
           }}
         >
@@ -149,8 +415,8 @@ function SourcesMarquee({ sources }: { sources: NewsSource[] }) {
               src={(s.iconUrl ?? "").trim() || undefined}
               alt={s.name}
               sx={{
-                width: 28,
-                height: 28,
+                width: { xs: 26, sm: 28 },
+                height: { xs: 26, sm: 28 },
                 bgcolor: "rgba(255,255,255,0.25)",
                 border: "1px solid rgba(255,255,255,0.35)",
               }}
