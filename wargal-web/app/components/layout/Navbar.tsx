@@ -124,6 +124,22 @@ export default function Navbar() {
     router.push("/");
   };
 
+  const onHomeLogoClick = () => {
+    // 1) Always scroll to top immediately (YouTube/Facebook feel)
+    window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+
+    // 2) If already on home: force a refresh (re-fetch SSR data)
+    if (pathname === "/") {
+      router.refresh();
+      return;
+    }
+
+    // 3) If not on home: go home, then refresh once the route updates
+    router.push("/");
+    // Small delay ensures route is mounted before refresh
+    setTimeout(() => router.refresh(), 50);
+  };
+
   return (
     <AppBar position="sticky" elevation={0}>
       <Toolbar sx={{ minHeight: 64, gap: 2 }}>
@@ -134,6 +150,8 @@ export default function Navbar() {
             src="/images/logo/correctLogo.png"
             alt="Wargal"
             sx={{ width: 70, height: 70, borderRadius: 1 }}
+            onClick={onHomeLogoClick}
+
           />
         </Box>
 
