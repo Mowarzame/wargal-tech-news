@@ -1,30 +1,83 @@
+// ==============================
+// File: wargal-web/app/components/news/FilteredNewsGrid.tsx
+// ==============================
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, CircularProgress, Typography } from "@mui/material";
+import React, { useMemo, useState } from "react";
+import {
+  Box,
+  Typography,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  IconButton,
+  Avatar,
+  Stack,
+  Button,
+} from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+
 import { NewsItem } from "@/app/types/news";
-import { fetchFeedItems } from "@/app/lib/api";
 import TimeAgo from "@/app/components/common/TimeAgo";
 
+/**
+ * This component expects the parent to provide initialItems and
+ * then it can render "All News" grid. (Matches your HomeShell usage.)
+ *
+ * If your existing component also fetches more items, keep that logic —
+ * only replace the open handler with `setOpenItem(it)` and keep everything else.
+ */
+
 type Props = {
-  selectedSourceIds: string[]; // empty => all
+  selectedSourceIds: string[];
   initialItems: NewsItem[];
   pageSize?: number;
-  columns?: { xs: number; sm: number; md: number; lg: number };
 };
-
-const REFRESH_MS = 2 * 60 * 1000;
 
 function clean(s?: string | null) {
   return (s ?? "").trim();
 }
 
-function safeUrl(u?: string | null) {
+function isHttpUrl(u?: string | null) {
   const url = clean(u);
-  return url.startsWith("http") ? url : "";
+  return url.startsWith("http://") || url.startsWith("https://");
 }
 
-function pickImage(it?: NewsItem) {
+function safeUrl(u?: string | null) {
+  const url = clean(u);
+  return isHttpUrl(url) ? url : "";
+}
+
+function extractYoutubeId(url: string): string | null {
+  try {
+    const u = new URL(url);
+
+    if (u.hostname.includes("youtu.be")) {
+      const id = u.pathname.replace("/", "").trim();
+      return id || null;
+    }
+
+    if (u.hostname.includes("youtube.com")) {
+      const v = u.searchParams.get("v");
+      if (v) return v;
+
+      const parts = u.pathname.split("/").filter(Boolean);
+
+      const embedIdx = parts.indexOf("embed");
+      if (embedIdx >= 0 && parts[embedIdx + 1]) return parts[embedIdx + 1];
+
+      const shortsIdx = parts.indexOf("shorts");
+      if (shortsIdx >= 0 && parts[shortsIdx + 1]) return parts[shortsIdx + 1];
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function pickThumb(it?: NewsItem | null) {
   const img = clean(it?.imageUrl);
   if (img) return img;
   const icon = clean(it?.sourceIconUrl);
@@ -36,264 +89,244 @@ export default function FilteredNewsGrid({
   selectedSourceIds,
   initialItems,
   pageSize = 60,
-  columns = { xs: 1, sm: 2, md: 3, lg: 4 },
 }: Props) {
-  const [items, setItems] = useState<NewsItem[]>((initialItems ?? []).filter(Boolean));
-  const [page, setPage] = useState(1);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  // ✅ Hooks first (prevents "Rendered fewer hooks" issues)
+  const [openItem, setOpenItem] = useState<NewsItem | null>(null);
 
-  const selectedSet = useMemo(() => new Set((selectedSourceIds ?? []).map(String)), [selectedSourceIds]);
-  const isAll = (selectedSourceIds ?? []).length === 0;
-  const isSingle = (selectedSourceIds ?? []).length === 1;
+  const list = useMemo(() => (initialItems ?? []).filter(Boolean), [initialItems]);
 
-  // ✅ Reset local list on selection change (safe)
-  useEffect(() => {
-    setItems((initialItems ?? []).filter(Boolean));
-    setPage(1);
-    setError(null);
-    setHasMore(true);
-  }, [initialItems, selectedSourceIds.join("|")]);
+  // ✅ modal safe values
+  const modalUrl = useMemo(() => safeUrl(openItem?.url), [openItem]);
+  const isVideo = openItem?.kind === 2;
 
-  // ✅ Dedupe set
-  const seenRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const s = new Set<string>();
-    for (const it of items ?? []) {
-      if (!it) continue;
-      const u = clean(it.url);
-      const k = u ? `u:${u}` : `id:${clean(it.id)}`;
-      if (k) s.add(k);
-    }
-    seenRef.current = s;
-  }, [items]);
+  const ytId = useMemo(() => {
+    const u = safeUrl(openItem?.url);
+    if (!u) return null;
+    return extractYoutubeId(u);
+  }, [openItem]);
 
-  const onOpen = (it?: NewsItem) => {
-    const url = safeUrl(it?.url);
-    if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
+  const youtubeEmbedSrc = useMemo(() => {
+    if (!ytId) return null;
+    return `https://www.youtube.com/embed/${ytId}?autoplay=1`;
+  }, [ytId]);
 
-  const filterForMulti = (arr: NewsItem[]) => {
-    if (isAll || isSingle) return arr;
-    return (arr ?? []).filter((it) => it?.sourceId && selectedSet.has(String(it.sourceId)));
-  };
+  // If you had filtering by selectedSourceIds inside this component,
+  // keep it here. For now, the parent already passes filtered items.
+  const displayItems = useMemo(() => {
+    const ids = (selectedSourceIds ?? []).map(String).filter(Boolean);
+    if (!ids.length) return list;
+    const set = new Set(ids);
+    return list.filter((it) => it?.sourceId && set.has(String(it.sourceId)));
+  }, [list, selectedSourceIds]);
 
-  const mergeTop = (prev: NewsItem[], next: NewsItem[]) => {
-    const out: NewsItem[] = [];
-    const seen = new Set<string>();
-
-    const add = (it: NewsItem) => {
-      if (!it) return;
-      const u = clean(it.url);
-      const k = u ? `u:${u}` : `id:${clean(it.id)}`;
-      if (!k || seen.has(k)) return;
-      seen.add(k);
-      out.push(it);
-    };
-
-    for (const it of next ?? []) add(it);
-    for (const it of prev ?? []) add(it);
-
-    return out;
-  };
-
-  // ✅ Auto refresh every 2 minutes (page 1) and merge into top
-  useEffect(() => {
-    let alive = true;
-
-    async function refresh() {
-      try {
-        setRefreshing(true);
-        const fetched = await fetchFeedItems({
-          page: 1,
-          pageSize,
-          sourceId: isSingle ? selectedSourceIds[0] : undefined,
-        });
-
-        const filtered = filterForMulti((fetched ?? []).filter(Boolean));
-        if (!alive) return;
-
-        setItems((prev) => mergeTop(prev ?? [], filtered));
-        setError(null);
-      } catch (e: any) {
-        if (!alive) return;
-        setError(e?.message ?? "Failed to refresh news");
-      } finally {
-        if (alive) setRefreshing(false);
-      }
-    }
-
-    refresh();
-    const id = setInterval(refresh, REFRESH_MS);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [selectedSourceIds.join("|"), pageSize]);
-
-  const loadMore = async () => {
-    if (loadingMore || !hasMore) return;
-
-    setLoadingMore(true);
-    setError(null);
-
-    try {
-      const nextPage = page + 1;
-
-      const fetched = await fetchFeedItems({
-        page: nextPage,
-        pageSize,
-        sourceId: isSingle ? selectedSourceIds[0] : undefined,
-      });
-
-      const filtered = filterForMulti((fetched ?? []).filter(Boolean));
-
-      const toAdd: NewsItem[] = [];
-      for (const it of filtered) {
-        if (!it) continue;
-        const u = clean(it.url);
-        const k = u ? `u:${u}` : `id:${clean(it.id)}`;
-        if (!k || seenRef.current.has(k)) continue;
-        seenRef.current.add(k);
-        toAdd.push(it);
-      }
-
-      setItems((prev) => [...(prev ?? []), ...toAdd]);
-      setPage(nextPage);
-
-      if ((fetched ?? []).length < pageSize) setHasMore(false);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load more news");
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  const list = (items ?? []).filter(Boolean);
+  const closeModal = () => setOpenItem(null);
 
   return (
-    <Box>
-      {!!error && (
-        <Typography color="error.main" sx={{ mb: 1 }}>
-          {error}
-        </Typography>
-      )}
-
-      {refreshing && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-          Updating…
-        </Typography>
-      )}
-
+    <>
+      {/* GRID (keep your current layout if different) */}
       <Box
         sx={{
           display: "grid",
           gridTemplateColumns: {
-            xs: `repeat(${columns.xs}, minmax(0, 1fr))`,
-            sm: `repeat(${columns.sm}, minmax(0, 1fr))`,
-            md: `repeat(${columns.md}, minmax(0, 1fr))`,
-            lg: `repeat(${columns.lg}, minmax(0, 1fr))`,
+            xs: "1fr",
+            sm: "repeat(2, minmax(0,1fr))",
+            md: "repeat(3, minmax(0,1fr))",
           },
           gap: 2,
         }}
       >
-        {list.map((it) => {
-          const img = pickImage(it);
-          const icon = clean(it?.sourceIconUrl);
+        {displayItems.slice(0, pageSize).map((it, idx) => {
+          const thumb = pickThumb(it);
+          const title = clean(it?.title) || "(Untitled)";
+          const source = clean(it?.sourceName) || "Source";
 
           return (
             <Box
-              key={clean(it?.id) || `${img}-${Math.random()}`}
-              onClick={() => onOpen(it)}
+              key={clean(it?.id) || `${idx}`}
+              onClick={() => it && setOpenItem(it)}
               sx={{
                 cursor: "pointer",
-                borderRadius: 2,
-                overflow: "hidden",
-                bgcolor: "background.paper",
+                bgcolor: "common.white",
                 border: "1px solid",
                 borderColor: "divider",
-                transition: "0.15s",
-                "&:hover": { boxShadow: 3 },
+                borderRadius: 2,
+                overflow: "hidden",
+                "&:hover": { boxShadow: 2 },
               }}
             >
               <Box
                 sx={{
                   height: 160,
-                  bgcolor: "grey.100",
-                  backgroundImage: `url(${img})`,
+                  backgroundImage: `url(${thumb})`,
                   backgroundSize: "cover",
                   backgroundPosition: "center",
+                  bgcolor: "grey.100",
                 }}
               />
 
-              <Box sx={{ p: 1.25 }}>
-                <Typography fontWeight={900} lineHeight={1.2} sx={{ mb: 0.75 }}>
-                  {clean(it?.title) || "(Untitled)"}
+              <Box sx={{ p: 1.5 }}>
+                <Typography fontWeight={950} sx={{ lineHeight: 1.2 }}>
+                  {title}
                 </Typography>
 
-                {!!clean(it?.summary) && (
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} noWrap>
-                    {clean(it?.summary)}
-                  </Typography>
-                )}
-
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
-                  <Box
-                    sx={{
-                      width: 18,
-                      height: 18,
-                      borderRadius: "50%",
-                      bgcolor: "grey.200",
-                      backgroundImage: icon ? `url(${icon})` : "none",
-                      backgroundSize: "cover",
-                      backgroundPosition: "center",
-                      flexShrink: 0,
-                    }}
-                  />
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+                  <Avatar src={it?.sourceIconUrl ?? undefined} sx={{ width: 20, height: 20 }}>
+                    {(source[0] ?? "S").toUpperCase()}
+                  </Avatar>
                   <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1 }}>
-                    {clean(it?.sourceName) || "Source"}
+                    {source}
                   </Typography>
-
-                  <Box sx={{ flex: 1 }} />
-
-                  <TimeAgo iso={it?.publishedAt} variant="caption" color="text.secondary" />
 
                   {it?.kind === 2 && (
                     <Box
                       sx={{
-                        px: 1,
-                        py: 0.25,
+                        px: 0.9,
+                        py: 0.2,
                         borderRadius: 999,
                         bgcolor: "error.main",
                         color: "common.white",
                         fontSize: 11,
                         fontWeight: 900,
-                        flexShrink: 0,
                       }}
                     >
                       Video
                     </Box>
                   )}
-                </Box>
+                </Stack>
+
+                {!!clean(it?.publishedAt) && (
+                  <TimeAgo
+                    iso={it?.publishedAt}
+                    variant="caption"
+                    sx={{ color: "text.secondary", fontWeight: 900, mt: 0.75, display: "block" }}
+                  />
+                )}
               </Box>
             </Box>
           );
         })}
       </Box>
 
-      <Box sx={{ display: "flex", justifyContent: "center", mt: 2 }}>
-        <Button
-          variant="contained"
-          onClick={loadMore}
-          disabled={loadingMore || !hasMore}
-          sx={{ borderRadius: 2, minWidth: 180 }}
-        >
-          {loadingMore ? <CircularProgress size={20} sx={{ color: "common.white" }} /> : hasMore ? "Load more" : "No more"}
-        </Button>
-      </Box>
-    </Box>
+      {/* ✅ Modal Reader */}
+      <Dialog open={!!openItem} onClose={closeModal} fullWidth maxWidth="lg">
+        <DialogTitle sx={{ fontWeight: 950, pr: 6 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography fontWeight={950} sx={{ flex: 1, minWidth: 0 }} noWrap>
+              {clean(openItem?.title) || "Read"}
+            </Typography>
+
+            <IconButton onClick={closeModal} aria-label="Close reader">
+              <CloseIcon />
+            </IconButton>
+          </Box>
+
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+            <Avatar src={openItem?.sourceIconUrl ?? undefined} sx={{ width: 22, height: 22 }}>
+              {(clean(openItem?.sourceName)?.[0] ?? "S").toUpperCase()}
+            </Avatar>
+
+            <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
+              {clean(openItem?.sourceName) || "Source"}
+            </Typography>
+
+            <Box sx={{ flex: 1 }} />
+
+            {!!clean(openItem?.publishedAt) && (
+              <TimeAgo
+                iso={openItem?.publishedAt}
+                variant="caption"
+                sx={{ color: "text.secondary", fontWeight: 900 }}
+              />
+            )}
+          </Stack>
+        </DialogTitle>
+
+        <DialogContent sx={{ p: 0 }}>
+          {!modalUrl ? (
+            <Box sx={{ p: 3 }}>
+              <Typography fontWeight={950} fontSize={16}>
+                This item can’t be opened in the modal
+              </Typography>
+              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                The feed item URL is missing or not a valid absolute URL.
+              </Typography>
+
+              <Box sx={{ mt: 2, display: "flex", gap: 1, flexWrap: "wrap" }}>
+                {!!clean(openItem?.url) && (
+                  <Button
+                    variant="outlined"
+                    startIcon={<OpenInNewIcon />}
+                    onClick={() => window.open(clean(openItem?.url)!, "_blank", "noopener,noreferrer")}
+                    sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+                  >
+                    Open in new tab
+                  </Button>
+                )}
+                <Button
+                  variant="contained"
+                  onClick={closeModal}
+                  sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+                >
+                  Close
+                </Button>
+              </Box>
+            </Box>
+          ) : isVideo ? (
+            <Box sx={{ width: "100%", aspectRatio: "16 / 9", bgcolor: "black" }}>
+              {youtubeEmbedSrc ? (
+                <Box
+                  component="iframe"
+                  src={youtubeEmbedSrc}
+                  title="YouTube video"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                  sx={{ width: "100%", height: "100%", border: 0 }}
+                />
+              ) : (
+                <Box sx={{ p: 3, color: "common.white" }}>
+                  <Typography fontWeight={950}>Video link detected but YouTube ID not found.</Typography>
+                  <Typography sx={{ opacity: 0.85, mt: 0.5 }}>
+                    We couldn’t parse a YouTube ID from this URL. You can still open it externally.
+                  </Typography>
+
+                  <Box sx={{ mt: 2, display: "flex", gap: 1, flexWrap: "wrap" }}>
+                    <Button
+                      variant="contained"
+                      startIcon={<OpenInNewIcon />}
+                      onClick={() => window.open(modalUrl, "_blank", "noopener,noreferrer")}
+                      sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+                    >
+                      Open in new tab
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      onClick={closeModal}
+                      sx={{
+                        textTransform: "none",
+                        fontWeight: 900,
+                        borderRadius: 999,
+                        color: "common.white",
+                        borderColor: "rgba(255,255,255,0.6)",
+                      }}
+                    >
+                      Close
+                    </Button>
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          ) : (
+            <Box sx={{ height: "calc(100vh - 220px)", minHeight: 520 }}>
+              <Box
+                component="iframe"
+                src={modalUrl}
+                title="Article"
+                sx={{ width: "100%", height: "100%", border: 0, bgcolor: "common.white" }}
+              />
+            </Box>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

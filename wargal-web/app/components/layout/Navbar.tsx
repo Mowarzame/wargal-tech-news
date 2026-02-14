@@ -316,7 +316,7 @@ export default function Navbar() {
         <DialogTitle sx={{ fontWeight: 950 }}>Sign in with Google</DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
           <Typography variant="caption" color="text.secondary">
-            This uses Google OAuth (like Flutter) and then calls your API <b>/users/login-google</b>.
+          Wargal News the first somali news aggregator
           </Typography>
 
           <Box sx={{ mt: 2, display: "flex", justifyContent: "center" }}>

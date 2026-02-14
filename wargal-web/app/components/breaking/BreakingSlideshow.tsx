@@ -66,7 +66,8 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
   const sourceIcon = clean(item.sourceIconUrl) ? item.sourceIconUrl! : undefined;
   const isVideo = item.kind === 2;
 
-  const fadeKey = useMemo(() => `${clean(item.id)}:${index}`, [item.id, index]);
+  // ✅ NO HOOKS HERE (fixes "Rendered fewer hooks than expected")
+  const fadeKey = `${clean(item.id)}:${index}`;
 
   return (
     <Box
@@ -152,6 +153,7 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
         </Box>
       </Fade>
 
+      {/* Left badge */}
       <Box
         sx={{
           position: "absolute",
@@ -183,6 +185,7 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
         )}
       </Box>
 
+      {/* Right time */}
       <Box
         sx={{
           position: "absolute",
