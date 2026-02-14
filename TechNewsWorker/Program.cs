@@ -42,6 +42,8 @@ builder.Services.AddHostedService<WorkerHeartbeatService>();
 // Your ingestion services
 builder.Services.AddHostedService<RssIngestionService>();
 builder.Services.AddHostedService<YouTubeIngestionService>();
+builder.Services.AddHostedService<InternalPostsIngestionService>();
+
 
 var host = builder.Build();
 
