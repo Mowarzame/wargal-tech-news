@@ -1,6 +1,8 @@
 // ==============================
 // File: wargal-web/app/page.tsx
-// Fully optimized SSR + SEO + instant load
+// ✅ SSR + SEO (Brand-first for "Wargal" / "Wargal News")
+// ✅ Performance optimization: stream the UI instantly (no blocking await in Page)
+// ✅ Fix: HomeData must be used as async server component inside Suspense
 // ==============================
 
 import { Suspense } from "react";
@@ -18,107 +20,92 @@ export const revalidate = 60;
 // ✅ Enable static optimization
 export const dynamic = "force-static";
 
+// ✅ Strongly prefer cached fetches for this route segment (helps TTFB)
+export const fetchCache = "force-cache";
+
 // ==============================
-// SEO Metadata (Homepage-specific)
+// Page-specific SEO Metadata
+// (Layout already has template/base. Page adds richer homepage title/description.)
 // ==============================
 
 export const metadata: Metadata = {
   title: "Wargal News – Somali News, Community & Breaking Updates",
   description:
-    "Wargal News is the fastest Somali news aggregator and community. Read breaking news, watch videos, and join discussions from trusted Somali and global sources.",
-  keywords: [
-    "Wargal",
-    "Wargal News",
-    "Somali news",
-    "Somalia news",
-    "Somali tech news",
-    "Somali community",
-    "breaking news Somalia",
-    "Somali videos",
-    "Somali articles",
-  ],
+    "Wargal News (Wargal) is a Somali news aggregator and community. Read breaking news, watch videos, and join discussions from trusted sources.",
   alternates: {
     canonical: "/",
   },
   openGraph: {
     title: "Wargal News – Somali News, Community & Breaking Updates",
-    description: "The fastest Somali news platform. Breaking news, videos, and community discussions.",
-    url: "https://wargalnews.com",
-    siteName: "Wargal News",
-    images: [
-      {
-        url: "/images/logo/correctLogo.png",
-        width: 1200,
-        height: 630,
-        alt: "Wargal News",
-      },
-    ],
-    locale: "en_US",
-    type: "website",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Wargal News",
-    description: "Breaking Somali news, videos, and community discussions.",
-    images: ["/images/logo/correctLogo.png"],
-  },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: { index: true, follow: true },
+    description:
+      "Wargal News (Wargal) is a Somali news aggregator and community. Breaking news, videos, and discussions.",
+    url: "https://www.wargalnews.com",
   },
 };
 
 // ==============================
-// Structured Data for Google SEO
+// Structured Data (Google)
 // ==============================
 
 function StructuredData() {
-  const orgLd = {
+  const org = {
     "@context": "https://schema.org",
     "@type": "Organization",
     name: "Wargal News",
-    url: "https://wargalnews.com",
-    logo: "https://wargalnews.com/images/logo/correctLogo.png",
+    alternateName: ["Wargal", "Wargal News"],
+    url: "https://www.wargalnews.com",
+    logo: "https://www.wargalnews.com/images/logo/correctLogo.png",
+    sameAs: [
+      // ✅ Replace with your real links when ready
+      // "https://www.facebook.com/yourpage",
+      // "https://www.instagram.com/yourpage",
+      // "https://www.youtube.com/@yourchannel",
+      // "https://x.com/yourhandle",
+    ],
   };
 
-  const siteLd = {
+  const website = {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: "Wargal News",
-    url: "https://wargalnews.com",
-    description: "Fast Somali news aggregator and community platform.",
+    alternateName: "Wargal",
+    url: "https://www.wargalnews.com",
     publisher: {
       "@type": "Organization",
       name: "Wargal News",
       logo: {
         "@type": "ImageObject",
-        url: "https://wargalnews.com/images/logo/correctLogo.png",
+        url: "https://www.wargalnews.com/images/logo/correctLogo.png",
       },
     },
-    potentialAction: {
-      "@type": "SearchAction",
-      target: "https://wargalnews.com/?q={search_term_string}",
-      "query-input": "required name=search_term_string",
+  };
+
+  const webpage = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "Wargal News",
+    url: "https://www.wargalnews.com",
+    description:
+      "Wargal News (Wargal) is a Somali news aggregator and community. Read breaking news, watch videos, and join discussions from trusted sources.",
+    isPartOf: {
+      "@type": "WebSite",
+      name: "Wargal News",
+      url: "https://www.wargalnews.com",
     },
   };
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(orgLd) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(siteLd) }}
-      />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(org) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(website) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(webpage) }} />
     </>
   );
 }
 
 // ==============================
 // Fast parallel fetch (cached)
+// ✅ NOTE: We DO NOT await this in Page anymore (so the shell streams instantly)
 // ==============================
 
 async function getData() {
@@ -135,22 +122,40 @@ async function getData() {
 }
 
 // ==============================
-// Page Component
+// ✅ Streamed data boundary
+// This async component runs inside <Suspense>, allowing instant first paint.
 // ==============================
 
-export default async function Page() {
+async function HomeData() {
   const data = await getData();
 
+  return (
+    <HomeShell
+      items={data.items ?? []}
+      sources={data.sources ?? []}
+      categoryBySourceId={data.categoryBySourceId}
+    />
+  );
+}
+
+// ==============================
+// Page Component
+// ✅ Performance: no blocking await here => faster initial render/stream.
+// ==============================
+
+export default function Page() {
   return (
     <>
       <StructuredData />
 
+      {/* ✅ SEO H1: Helps Google associate homepage with "Wargal / Wargal News" */}
+      <h1 style={{ position: "absolute", left: -10000, top: "auto", width: 1, height: 1, overflow: "hidden" }}>
+        Wargal News (Wargal) – Somali News, Videos & Community
+      </h1>
+
       <Suspense fallback={<HomeShellSkeleton />}>
-        <HomeShell
-          items={data.items ?? []}
-          sources={data.sources ?? []}
-          categoryBySourceId={data.categoryBySourceId}
-        />
+   
+        <HomeData />
       </Suspense>
     </>
   );

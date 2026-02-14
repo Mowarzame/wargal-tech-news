@@ -1,4 +1,8 @@
-import { MetadataRoute } from "next";
+// ==============================
+// File: wargal-web/app/robots.ts
+// ==============================
+
+import type { MetadataRoute } from "next";
 
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -6,8 +10,10 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
+        disallow: ["/api/", "/_next/"],
       },
     ],
-    sitemap: "https://wargalnews.com/sitemap.xml",
+    sitemap: "https://www.wargalnews.com/sitemap.xml",
+    host: "https://www.wargalnews.com",
   };
 }

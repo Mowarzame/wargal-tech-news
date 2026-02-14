@@ -147,7 +147,7 @@ export default function Navbar() {
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
           <Box
             component="img"
-            src="/images/logo/correctLogo.png"
+            src="/images/logo/correctLogo2.png"
             alt="Wargal"
             sx={{ width: 70, height: 70, borderRadius: 1 }}
             onClick={onHomeLogoClick}

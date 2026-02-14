@@ -29,11 +29,47 @@ function deriveTitle(content: string) {
   return c.length > 60 ? `${c.slice(0, 60)}…` : c;
 }
 
+function extractYouTubeId(input?: string | null): string | null {
+  const s = clean(input);
+  if (!s) return null;
+
+  if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
+
+  try {
+    const u = new URL(s);
+
+    if (u.hostname.includes("youtu.be")) {
+      const id = u.pathname.split("/").filter(Boolean)[0];
+      return id && /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
+    }
+
+    const v = u.searchParams.get("v");
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+
+    const parts = u.pathname.split("/").filter(Boolean);
+
+    const shortsIdx = parts.findIndex((p) => p === "shorts");
+    if (shortsIdx >= 0 && parts[shortsIdx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[shortsIdx + 1])) {
+      return parts[shortsIdx + 1];
+    }
+
+    const embedIdx = parts.findIndex((p) => p === "embed");
+    if (embedIdx >= 0 && parts[embedIdx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[embedIdx + 1])) {
+      return parts[embedIdx + 1];
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function PostComposer({ user }: { user: AuthUser }) {
   const qc = useQueryClient();
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const [content, setContent] = React.useState("");
+  const [videoUrl, setVideoUrl] = React.useState("");
   const [imageFile, setImageFile] = React.useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string>("");
 
@@ -62,17 +98,19 @@ export default function PostComposer({ user }: { user: AuthUser }) {
     setImageFile(null);
   };
 
-  const canSubmit = clean(content).length > 0 || !!imageFile;
+  const ytOk = !clean(videoUrl) || !!extractYouTubeId(videoUrl);
+  const canSubmit = clean(content).length > 0 || !!imageFile || clean(videoUrl).length > 0;
 
   const createMut = useMutation({
     mutationFn: async () => {
       const c = clean(content);
-      const title = deriveTitle(c || "Image post");
+      const title = deriveTitle(c || "Post");
+      const v = clean(videoUrl) || null;
 
       return await createPostWithImage({
         title,
         content: c || "",
-        videoUrl: null,
+        videoUrl: v,
         imageFile: imageFile ?? null,
       });
     },
@@ -86,7 +124,7 @@ export default function PostComposer({ user }: { user: AuthUser }) {
         title: deriveTitle(clean(content) || "Post"),
         content: clean(content) || "",
         imageUrl: imagePreviewUrl || null,
-        videoUrl: null,
+        videoUrl: clean(videoUrl) || null,
         user,
         createdAt: new Date().toISOString(),
         isVerified: user.role?.toLowerCase() === "admin",
@@ -119,9 +157,12 @@ export default function PostComposer({ user }: { user: AuthUser }) {
 
   const submit = async () => {
     if (!canSubmit || createMut.isPending) return;
+    if (!ytOk) return;
+
     try {
       await createMut.mutateAsync();
       setContent("");
+      setVideoUrl("");
       removeImage();
     } catch {}
   };
@@ -145,7 +186,19 @@ export default function PostComposer({ user }: { user: AuthUser }) {
               sx={{ "& .MuiOutlinedInput-root": { borderRadius: 999, bgcolor: "grey.50" } }}
             />
 
-            {/* Fixed-size preview area (Facebook-like) */}
+            {/* ✅ Optional YouTube URL */}
+            <TextField
+              value={videoUrl}
+              onChange={(e) => setVideoUrl(e.target.value)}
+              placeholder="Optional: YouTube video URL (or video id)"
+              fullWidth
+              size="small"
+              sx={{ mt: 1, "& .MuiOutlinedInput-root": { borderRadius: 999, bgcolor: "grey.50" } }}
+              error={!ytOk}
+              helperText={!ytOk ? "Please paste a valid YouTube URL or 11-char video id." : " "}
+            />
+
+            {/* Preview image */}
             {imagePreviewUrl && (
               <Box sx={{ mt: 1.25, position: "relative" }}>
                 <Box
@@ -158,13 +211,16 @@ export default function PostComposer({ user }: { user: AuthUser }) {
                     borderColor: "divider",
                     overflow: "hidden",
                     bgcolor: "grey.100",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
                   <Box
                     component="img"
                     src={imagePreviewUrl}
                     alt="Preview"
-                    sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    sx={{ width: "100%", height: "100%", objectFit: "contain" }}
                   />
                 </Box>
 
@@ -201,7 +257,7 @@ export default function PostComposer({ user }: { user: AuthUser }) {
               <Button
                 variant="contained"
                 onClick={submit}
-                disabled={createMut.isPending || !canSubmit}
+                disabled={createMut.isPending || !canSubmit || !ytOk}
                 sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
               >
                 {createMut.isPending ? "Posting…" : "Post"}

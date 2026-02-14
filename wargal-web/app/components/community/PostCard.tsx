@@ -52,9 +52,48 @@ function timeAgoFromIso(iso?: string | null) {
   return `${day}d`;
 }
 
+function extractYouTubeId(input?: string | null): string | null {
+  const s = clean(input);
+  if (!s) return null;
+
+  if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
+
+  try {
+    const u = new URL(s);
+
+    if (u.hostname.includes("youtu.be")) {
+      const id = u.pathname.split("/").filter(Boolean)[0];
+      return id && /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
+    }
+
+    const v = u.searchParams.get("v");
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+
+    const parts = u.pathname.split("/").filter(Boolean);
+    const shortsIdx = parts.findIndex((p) => p === "shorts");
+    if (shortsIdx >= 0 && parts[shortsIdx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[shortsIdx + 1])) {
+      return parts[shortsIdx + 1];
+    }
+
+    const embedIdx = parts.findIndex((p) => p === "embed");
+    if (embedIdx >= 0 && parts[embedIdx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[embedIdx + 1])) {
+      return parts[embedIdx + 1];
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function youtubeEmbedUrl(videoUrl?: string | null) {
+  const id = extractYouTubeId(videoUrl);
+  if (!id) return null;
+  return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
+}
+
 /**
- * Detects if the Typography content is visually clamped (overflowing).
- * Works reliably for multi-line clamp using -webkit-line-clamp.
+ * Detects if Typography content is visually clamped (overflowing).
  */
 function useIsClamped(dep: any) {
   const ref = React.useRef<HTMLDivElement | null>(null);
@@ -65,14 +104,12 @@ function useIsClamped(dep: any) {
     if (!el) return;
 
     const measure = () => {
-      // scrollHeight > clientHeight means overflow (clamped)
       const next = el.scrollHeight > el.clientHeight + 1;
       setIsClamped(next);
     };
 
     measure();
 
-    // Re-measure on resize (responsive)
     const ro = new ResizeObserver(() => measure());
     ro.observe(el);
 
@@ -92,14 +129,11 @@ export default function PostCard({ post }: { post: PostDto }) {
   const [reactionsOpen, setReactionsOpen] = React.useState(false);
 
   const ago = timeAgoFromIso(post.createdAt);
-
   const postUrl = `/community/${post.id}`;
 
-  // ✅ clamp detection for 3 lines
   const contentText = clean(post.content);
   const { ref: contentRef, isClamped } = useIsClamped(`${post.id}:${contentText}`);
 
-  // ✅ comments query: keep it live when open
   const commentsQ = useQuery({
     queryKey: ["comments", post.id],
     queryFn: () => fetchComments(post.id),
@@ -108,7 +142,6 @@ export default function PostCard({ post }: { post: PostDto }) {
     refetchOnWindowFocus: true,
   });
 
-  // ✅ reaction users list
   const reactionsUsersQ = useQuery({
     queryKey: ["reactionUsers", post.id],
     queryFn: () => fetchPostReactionsUsers(post.id),
@@ -116,7 +149,6 @@ export default function PostCard({ post }: { post: PostDto }) {
     refetchInterval: reactionsOpen ? 10_000 : false,
   });
 
-  // ✅ Optimistic reactions (NO disabling UI)
   const reactMut = useMutation({
     mutationFn: (next: boolean | null) => reactToPost(post.id, next),
 
@@ -130,11 +162,9 @@ export default function PostCard({ post }: { post: PostDto }) {
       let likes = cur.likes ?? 0;
       let dislikes = cur.dislikes ?? 0;
 
-      // remove old
       if (old === true) likes = Math.max(0, likes - 1);
       if (old === false) dislikes = Math.max(0, dislikes - 1);
 
-      // add next
       if (next === true) likes += 1;
       if (next === false) dislikes += 1;
 
@@ -156,7 +186,6 @@ export default function PostCard({ post }: { post: PostDto }) {
     },
   });
 
-  // ✅ Optimistic add comment (instant)
   const addCommentMut = useMutation({
     mutationFn: (text: string) => addComment(post.id, text),
 
@@ -185,9 +214,7 @@ export default function PostCard({ post }: { post: PostDto }) {
 
       qc.setQueryData<PostDto[]>(
         ["posts"],
-        prevPosts.map((p) =>
-          p.id === post.id ? { ...p, commentsCount: (p.commentsCount ?? 0) + 1 } : p
-        )
+        prevPosts.map((p) => (p.id === post.id ? { ...p, commentsCount: (p.commentsCount ?? 0) + 1 } : p))
       );
 
       return { prevComments, prevPosts, optimisticId: optimistic.id };
@@ -232,6 +259,8 @@ export default function PostCard({ post }: { post: PostDto }) {
   const likesUsers = reactionUsers.filter((u) => u.isLike);
   const dislikesUsers = reactionUsers.filter((u) => !u.isLike);
 
+  const embed = youtubeEmbedUrl(post.videoUrl);
+
   return (
     <>
       <Card sx={{ borderRadius: 2, border: "1px solid", borderColor: "divider" }}>
@@ -267,7 +296,6 @@ export default function PostCard({ post }: { post: PostDto }) {
                     WebkitLineClamp: 3,
                     overflow: "hidden",
                   }}
-                  // Facebook-like: clickable when truncated
                   onClick={() => {
                     if (isClamped) router.push(postUrl);
                   }}
@@ -275,7 +303,6 @@ export default function PostCard({ post }: { post: PostDto }) {
                   {contentText}
                 </Typography>
 
-                {/* Read more only when truly clamped */}
                 {isClamped && (
                   <Button
                     onClick={() => router.push(postUrl)}
@@ -295,6 +322,7 @@ export default function PostCard({ post }: { post: PostDto }) {
               </Box>
             )}
 
+            {/* ✅ Image (FIXED): contain not crop */}
             {!!clean(post.imageUrl) && (
               <Box sx={{ mt: 1.25 }}>
                 <Box
@@ -307,13 +335,45 @@ export default function PostCard({ post }: { post: PostDto }) {
                     borderColor: "divider",
                     overflow: "hidden",
                     bgcolor: "grey.100",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
                   <Box
                     component="img"
                     src={clean(post.imageUrl)}
                     alt=""
-                    sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    loading="lazy"
+                    decoding="async"
+                    sx={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  />
+                </Box>
+              </Box>
+            )}
+
+            {/* ✅ Video at end of post */}
+            {!!embed && (
+              <Box sx={{ mt: 1.25 }}>
+                <Box
+                  sx={{
+                    width: "100%",
+                    aspectRatio: "16 / 9",
+                    borderRadius: 2,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    overflow: "hidden",
+                    bgcolor: "common.black",
+                  }}
+                >
+                  <Box
+                    component="iframe"
+                    src={embed}
+                    title="YouTube video"
+                    loading="lazy"
+                    sx={{ width: "100%", height: "100%", border: 0 }}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
                   />
                 </Box>
               </Box>
@@ -328,18 +388,14 @@ export default function PostCard({ post }: { post: PostDto }) {
 
             <Box sx={{ flex: 1 }} />
 
-            <Button
-              onClick={() => setReactionsOpen(true)}
-              size="small"
-              sx={{ textTransform: "none", fontWeight: 900 }}
-            >
+            <Button onClick={() => setReactionsOpen(true)} size="small" sx={{ textTransform: "none", fontWeight: 900 }}>
               View reactions
             </Button>
           </Box>
 
           <Divider sx={{ my: 1.25 }} />
 
-          {/* Actions (NO disabling) */}
+          {/* Actions */}
           <Stack direction="row" spacing={1} sx={{ justifyContent: "space-between" }}>
             <Button
               onClick={() => doReact(true)}
@@ -492,10 +548,7 @@ export default function PostCard({ post }: { post: PostDto }) {
                   <Typography color="text.secondary">No dislikes yet</Typography>
                 ) : (
                   dislikesUsers.map((u) => (
-                    <Box
-                      key={`${u.userId}-dislike`}
-                      sx={{ display: "flex", gap: 1, alignItems: "center", py: 0.75 }}
-                    >
+                    <Box key={`${u.userId}-dislike`} sx={{ display: "flex", gap: 1, alignItems: "center", py: 0.75 }}>
                       <Avatar src={clean(u.userPhotoUrl) || undefined} sx={{ width: 28, height: 28 }}>
                         {(clean(u.userName)?.[0] ?? "U").toUpperCase()}
                       </Avatar>
