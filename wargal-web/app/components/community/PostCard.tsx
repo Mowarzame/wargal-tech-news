@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import {
   Avatar,
   Box,
@@ -51,7 +52,38 @@ function timeAgoFromIso(iso?: string | null) {
   return `${day}d`;
 }
 
+/**
+ * Detects if the Typography content is visually clamped (overflowing).
+ * Works reliably for multi-line clamp using -webkit-line-clamp.
+ */
+function useIsClamped(dep: any) {
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  const [isClamped, setIsClamped] = React.useState(false);
+
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const measure = () => {
+      // scrollHeight > clientHeight means overflow (clamped)
+      const next = el.scrollHeight > el.clientHeight + 1;
+      setIsClamped(next);
+    };
+
+    measure();
+
+    // Re-measure on resize (responsive)
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(el);
+
+    return () => ro.disconnect();
+  }, [dep]);
+
+  return { ref, isClamped };
+}
+
 export default function PostCard({ post }: { post: PostDto }) {
+  const router = useRouter();
   const qc = useQueryClient();
 
   const [commentsOpen, setCommentsOpen] = React.useState(false);
@@ -60,6 +92,12 @@ export default function PostCard({ post }: { post: PostDto }) {
   const [reactionsOpen, setReactionsOpen] = React.useState(false);
 
   const ago = timeAgoFromIso(post.createdAt);
+
+  const postUrl = `/community/${post.id}`;
+
+  // ✅ clamp detection for 3 lines
+  const contentText = clean(post.content);
+  const { ref: contentRef, isClamped } = useIsClamped(`${post.id}:${contentText}`);
 
   // ✅ comments query: keep it live when open
   const commentsQ = useQuery({
@@ -102,9 +140,7 @@ export default function PostCard({ post }: { post: PostDto }) {
 
       qc.setQueryData<PostDto[]>(
         ["posts"],
-        prev.map((p) =>
-          p.id === post.id ? { ...p, likes, dislikes, myReaction: next } : p
-        )
+        prev.map((p) => (p.id === post.id ? { ...p, likes, dislikes, myReaction: next } : p))
       );
 
       return { prev };
@@ -133,7 +169,6 @@ export default function PostCard({ post }: { post: PostDto }) {
       const prevComments = qc.getQueryData<CommentDto[]>(["comments", post.id]) ?? [];
       const prevPosts = qc.getQueryData<PostDto[]>(["posts"]) ?? [];
 
-      // ensure comments panel opens and we have a list to insert into
       setCommentsOpen(true);
 
       const optimistic: CommentDto = {
@@ -178,7 +213,6 @@ export default function PostCard({ post }: { post: PostDto }) {
   });
 
   const doReact = (val: boolean) => {
-    // toggle: if same reaction then undo
     const next = post.myReaction === val ? null : val;
     reactMut.mutate(next);
   };
@@ -204,10 +238,7 @@ export default function PostCard({ post }: { post: PostDto }) {
         <CardContent>
           {/* Header */}
           <Box sx={{ display: "flex", gap: 1.25, alignItems: "center" }}>
-            <Avatar
-              src={clean(post.user?.profilePictureUrl) || undefined}
-              sx={{ width: 44, height: 44 }}
-            >
+            <Avatar src={clean(post.user?.profilePictureUrl) || undefined} sx={{ width: 44, height: 44 }}>
               {(clean(post.user?.name)?.[0] ?? "U").toUpperCase()}
             </Avatar>
 
@@ -225,8 +256,43 @@ export default function PostCard({ post }: { post: PostDto }) {
 
           {/* Content */}
           <Box sx={{ mt: 1.25 }}>
-            {!!clean(post.content) && (
-              <Typography sx={{ whiteSpace: "pre-wrap" }}>{clean(post.content)}</Typography>
+            {!!contentText && (
+              <Box>
+                <Typography
+                  ref={contentRef as any}
+                  sx={{
+                    whiteSpace: "pre-wrap",
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical",
+                    WebkitLineClamp: 3,
+                    overflow: "hidden",
+                  }}
+                  // Facebook-like: clickable when truncated
+                  onClick={() => {
+                    if (isClamped) router.push(postUrl);
+                  }}
+                >
+                  {contentText}
+                </Typography>
+
+                {/* Read more only when truly clamped */}
+                {isClamped && (
+                  <Button
+                    onClick={() => router.push(postUrl)}
+                    size="small"
+                    sx={{
+                      mt: 0.5,
+                      textTransform: "none",
+                      fontWeight: 950,
+                      px: 0,
+                      minWidth: 0,
+                      justifyContent: "flex-start",
+                    }}
+                  >
+                    Read more
+                  </Button>
+                )}
+              </Box>
             )}
 
             {!!clean(post.imageUrl) && (
@@ -331,7 +397,7 @@ export default function PostCard({ post }: { post: PostDto }) {
             <Button
               variant="contained"
               onClick={submitComment}
-              disabled={!clean(commentText)} // only disable if empty (not loading)
+              disabled={!clean(commentText)}
               sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999, px: 2.5 }}
             >
               Send
@@ -376,7 +442,6 @@ export default function PostCard({ post }: { post: PostDto }) {
                     </Box>
                   ))}
 
-                  {/* subtle syncing hint (no disabling UI) */}
                   {(reactMut.isPending || addCommentMut.isPending) && (
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
                       Syncing…
@@ -421,9 +486,7 @@ export default function PostCard({ post }: { post: PostDto }) {
 
               <Divider sx={{ my: 2 }} />
 
-              <Typography fontWeight={950}>
-                Dislikes ({dislikesUsers.length})
-              </Typography>
+              <Typography fontWeight={950}>Dislikes ({dislikesUsers.length})</Typography>
               <Box sx={{ mt: 1 }}>
                 {dislikesUsers.length === 0 ? (
                   <Typography color="text.secondary">No dislikes yet</Typography>
