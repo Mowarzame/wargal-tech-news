@@ -6,7 +6,8 @@ namespace TechNewsCore.Models
     public enum NewsSourceType : short
     {
         RssWebsite = 1,
-        YouTubeChannel = 2
+        YouTubeChannel = 2,
+         InternalPosts = 3 // ADD THIS
     }
 
     [Index(nameof(Type))]

@@ -9,6 +9,9 @@ namespace TechNewsWorker.Data
 
         public DbSet<NewsSource> NewsSources => Set<NewsSource>();
         public DbSet<FeedItem> FeedItems => Set<FeedItem>();
+                // ✅ ADD THESE (read-only usage is fine)
+        public DbSet<Post> Posts => Set<Post>();
+        public DbSet<User> Users => Set<User>(); // or AppUser depending on your model name
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
