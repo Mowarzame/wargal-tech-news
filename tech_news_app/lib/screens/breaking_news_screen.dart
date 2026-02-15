@@ -7,9 +7,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import '../providers/news_provider.dart';
 import '../models/news_item.dart';
-import '../models/news_source.dart';
 import '../widgets/news_card.dart';
-import 'news_webview_screen.dart';
+import '../widgets/content_modal.dart';
 
 class BreakingNewsScreen extends StatefulWidget {
   const BreakingNewsScreen({super.key});
@@ -22,18 +21,13 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
     with WidgetsBindingObserver {
   bool _inited = false;
 
-  Timer? _timer;
+  Timer? _slideshowTimer;
+  Timer? _autoRefreshTimer;
 
-  // Slideshow queue (unique items), and current position
   List<NewsItem> _queue = const [];
   int _pos = 0;
 
-  // Track what has been shown in the current cycle so we don't repeat
-  final Set<String> _shownUrls = <String>{};
-
-  // ---------------------------
-  // LIFECYCLE
-  // ---------------------------
+  int _lastTick = -1;
 
   @override
   void initState() {
@@ -47,9 +41,11 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
 
     if (!_inited) {
       _inited = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        context.read<NewsProvider>().init();
+        await context.read<NewsProvider>().init();
+        _startAutoRefresh();
+        _startOrStopSlideshow();
       });
     }
   }
@@ -58,129 +54,80 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!mounted) return;
 
-    final p = context.read<NewsProvider>();
-
     if (state == AppLifecycleState.resumed) {
-      // If you implemented provider auto refresh:
-      // p.setAutoRefreshEnabled(true);
-      // p.autoRefreshTop();
-
-      // Restart slideshow timer
-      _startOrStopTimer();
+      _startAutoRefresh();
+      _startOrStopSlideshow();
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {
-      // Stop slideshow timer (battery safe)
-      _timer?.cancel();
-      _timer = null;
-
-      // Optional provider pause:
-      // p.setAutoRefreshEnabled(false);
+      _stopAutoRefresh();
+      _slideshowTimer?.cancel();
+      _slideshowTimer = null;
     }
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(const Duration(minutes: 2), (_) async {
+      if (!mounted) return;
+      await context.read<NewsProvider>().refresh(silent: true);
+      // slideshow reset is handled via refreshTick check in build()
+    });
+  }
+
+  void _stopAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = null;
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _timer?.cancel();
-    _timer = null;
+    _stopAutoRefresh();
+    _slideshowTimer?.cancel();
+    _slideshowTimer = null;
     super.dispose();
   }
 
-  // ---------------------------
-  // SLIDESHOW TIMER LOGIC
-  // ---------------------------
+  void _openFiltersMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => const _CombinedFiltersSheet(),
+    );
+  }
 
-  void _startOrStopTimer() {
-    // If less than 2 items → no slideshow needed
+  void _openContent(BuildContext context, NewsItem item) {
+    ContentModal.open(context, item);
+  }
+
+  void _startOrStopSlideshow() {
     if (_queue.length < 2) {
-      _timer?.cancel();
-      _timer = null;
+      _slideshowTimer?.cancel();
+      _slideshowTimer = null;
       return;
     }
+    if (_slideshowTimer != null) return;
 
-    // If already running → do nothing
-    if (_timer != null) return;
-
-    _timer = Timer.periodic(const Duration(seconds: 6), (_) {
+    _slideshowTimer = Timer.periodic(const Duration(seconds: 6), (_) {
       if (!mounted) return;
       _goNext();
     });
   }
 
-  // ---------------------------
-  // NAVIGATION HELPERS
-  // (you already have these below)
-  // ---------------------------
-
   void _goNext() {
     if (_queue.isEmpty) return;
-
-    if (_shownUrls.length >= _queue.length) {
-      _shownUrls.clear();
-      _shownUrls.add(_queue[_pos].url.trim());
-    }
-
-    int attempts = 0;
-    int next = _pos;
-
-    while (attempts < _queue.length) {
-      next = (next + 1) % _queue.length;
-      final url = _queue[next].url.trim();
-
-      if (!_shownUrls.contains(url)) {
-        setState(() {
-          _pos = next;
-          _shownUrls.add(url);
-        });
-        return;
-      }
-
-      attempts++;
-    }
-
     setState(() {
       _pos = (_pos + 1) % _queue.length;
-      _shownUrls.add(_queue[_pos].url.trim());
     });
   }
 
   void _goPrev() {
     if (_queue.isEmpty) return;
-
     setState(() {
       _pos = (_pos - 1 + _queue.length) % _queue.length;
-      _shownUrls.add(_queue[_pos].url.trim());
     });
-  }
-
-  void _openItem(BuildContext context, NewsItem item) {
-    final raw = item.url.trim();
-    final uri = Uri.tryParse(raw);
-    final ok = uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
-
-    if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Invalid link: $raw")),
-      );
-      return;
-    }
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => NewsWebViewScreen(url: raw, title: item.title),
-      ),
-    );
-  }
-
-  void _openSourcesPicker(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (_) => const _SourcesPickerSheet(),
-    );
   }
 
   String _timeAgo(DateTime dt) {
@@ -200,22 +147,27 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
     return '${mo}mo ago';
   }
 
-  /// Build a slideshow queue that:
-  /// 1) is latest-first
-  /// 2) is unique by url
-  /// 3) prefers different sources (round-robin) before repeating sources
-  List<NewsItem> _buildSlideQueue(List<NewsItem> latestSorted, {int maxSlides = 10}) {
-    final byUrl = LinkedHashMap<String, NewsItem>();
-    for (final it in latestSorted) {
+  List<NewsItem> _dedupeByUrlKeepOrder(List<NewsItem> list) {
+    final seen = <String>{};
+    final out = <NewsItem>[];
+    for (final it in list) {
       final u = it.url.trim();
       if (u.isEmpty) continue;
-      byUrl.putIfAbsent(u, () => it);
+      if (seen.add(u)) out.add(it);
     }
-    final unique = byUrl.values.toList();
+    return out;
+  }
 
+  List<NewsItem> _buildSlideQueue(List<NewsItem> latestSorted,
+      {int maxSlides = 10}) {
+    // Must be newest-first already
+    final unique = _dedupeByUrlKeepOrder(latestSorted);
+
+    // Optional: source mixing (keeps latest-first preference)
     final Map<String, Queue<NewsItem>> bySource = {};
     for (final it in unique) {
-      final src = (it.sourceName ?? '').trim().isEmpty ? 'Unknown' : (it.sourceName ?? '').trim();
+      final src =
+          it.sourceName.trim().isEmpty ? 'Unknown' : it.sourceName.trim();
       (bySource[src] ??= Queue<NewsItem>()).add(it);
     }
 
@@ -239,99 +191,77 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
       if (!progressed) break;
     }
 
-    if (slides.isEmpty) {
-      return unique.take(maxSlides).toList();
-    }
-
+    if (slides.isEmpty) return unique.take(maxSlides).toList();
     return slides;
   }
 
-  void _syncQueue(List<NewsItem> newQueue) {
-    final oldUrls = _queue.map((e) => e.url).toList();
-    final newUrls = newQueue.map((e) => e.url).toList();
-
-    final same = oldUrls.length == newUrls.length &&
-        List.generate(oldUrls.length, (i) => oldUrls[i] == newUrls[i]).every((x) => x);
-
-    if (same) return;
-
+  void _setQueueAndResetToLatest(List<NewsItem> newQueue) {
     _queue = newQueue;
-    _pos = 0;
-    _shownUrls.clear();
-    if (_queue.isNotEmpty) _shownUrls.add(_queue[0].url.trim());
+    _pos = 0; // ✅ ALWAYS start from latest
+    // restart slideshow timer safely
+    _slideshowTimer?.cancel();
+    _slideshowTimer = null;
+    _startOrStopSlideshow();
   }
-
 
   @override
   Widget build(BuildContext context) {
     final p = context.watch<NewsProvider>();
 
-    // Latest-only feed items (provider already respects source filters)
+    // ✅ Always newest-first (provider already sorted)
     final latest = p.items.toList()
       ..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
 
-    // Build slideshow from latest feed items
     final slideQueue = _buildSlideQueue(latest, maxSlides: 10);
-    _syncQueue(slideQueue);
-    _startOrStopTimer();
 
-    final current = _queue.isNotEmpty ? _queue[_pos] : null;
-
-    // Exclude slideshow items from grid + list
-    final slideUrls = _queue.map((e) => e.url.trim()).toSet();
-
-    // Highlights grid: 6 items preferred with images, fallback to any items
-    final highlights = <NewsItem>[];
-    final seenGrid = <String>{};
-
-    for (final it in latest) {
-      final url = it.url.trim();
-      if (url.isEmpty) continue;
-      if (slideUrls.contains(url)) continue;
-      if (seenGrid.contains(url)) continue;
-      if ((it.imageUrl ?? '').trim().isEmpty) continue;
-      seenGrid.add(url);
-      highlights.add(it);
-      if (highlights.length == 6) break;
-    }
-    if (highlights.length < 6) {
-      for (final it in latest) {
-        final url = it.url.trim();
-        if (url.isEmpty) continue;
-        if (slideUrls.contains(url)) continue;
-        if (seenGrid.contains(url)) continue;
-        seenGrid.add(url);
-        highlights.add(it);
-        if (highlights.length == 6) break;
+    // ✅ If refresh happened (manual or auto), reset slideshow to latest
+    if (_lastTick != p.refreshTick) {
+      _lastTick = p.refreshTick;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _setQueueAndResetToLatest(slideQueue);
+      });
+    } else {
+      // If queue length/content changed (filters), still keep slideshow stable but start at latest
+      final oldSig = _queue.map((e) => e.url).join('|');
+      final newSig = slideQueue.map((e) => e.url).join('|');
+      if (oldSig != newSig) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _setQueueAndResetToLatest(slideQueue);
+        });
+      } else {
+        _queue = slideQueue;
+        _startOrStopSlideshow();
       }
     }
 
-    // More news list: latest excluding slideshow + excluding highlights
-    final highlightUrls = highlights.map((e) => e.url.trim()).toSet();
-    final more = latest
-        .where((it) => !slideUrls.contains(it.url.trim()) && !highlightUrls.contains(it.url.trim()))
-        .take(30)
-        .toList();
+    final current = _queue.isNotEmpty ? _queue[_pos] : null;
+
+    // ✅ Highlights: FIXED latest items (not linked to _pos)
+    final highlights = latest.take(6).toList();
+
+    // ✅ More news: FIXED latest items (not linked to _pos)
+    final moreList = latest;
 
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
       body: RefreshIndicator(
-        onRefresh: p.refresh,
+        onRefresh: () => p.refresh(silent: false),
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            // ✅ Sources filter header (same UX as NewsScreen)
             SliverPersistentHeader(
               pinned: true,
-              delegate: _ChipsHeaderDelegate(
-                height: 52,
-                child: _PinnedChipsRow(
-                  onOpenPicker: () => _openSourcesPicker(context),
+              delegate: _HeaderDelegate(
+                height: 64,
+                child: _PinnedFiltersBar(
+                  title: "Breaking",
+                  onOpenMenu: () => _openFiltersMenu(context),
                 ),
               ),
             ),
 
-            // Header row (Breaking label + next button)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
@@ -347,16 +277,20 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                       ),
                     ),
                     IconButton(
+                      tooltip: "Previous",
+                      onPressed: _queue.length >= 2 ? _goPrev : null,
+                      icon: const Icon(Icons.chevron_left),
+                    ),
+                    IconButton(
                       tooltip: "Next",
                       onPressed: _queue.length >= 2 ? _goNext : null,
-                      icon: const Icon(Icons.skip_next),
+                      icon: const Icon(Icons.chevron_right),
                     ),
                   ],
                 ),
               ),
             ),
 
-            // Loading / error / empty
             if (p.isLoading)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -366,10 +300,10 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
               ),
 
             if (!p.isLoading && p.error != null)
-              SliverToBoxAdapter(
+              const SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.only(top: 60),
-                  child: Center(child: Text("Error: ${p.error}")),
+                  padding: EdgeInsets.only(top: 60),
+                  child: Center(child: Text("Failed to load breaking news.")),
                 ),
               ),
 
@@ -381,7 +315,6 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                 ),
               ),
 
-            // Hero slideshow
             if (!p.isLoading && p.error == null && current != null)
               SliverToBoxAdapter(
                 child: Padding(
@@ -390,14 +323,11 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                     key: ValueKey(current.url),
                     item: current,
                     timeAgo: _timeAgo(current.publishedAt.toLocal()),
-                    onOpen: () => _openItem(context, current),
-                    onPrev: _queue.length >= 2 ? _goPrev : null,
-                    onNext: _queue.length >= 2 ? _goNext : null,
+                    onOpen: () => _openContent(context, current),
                   ),
                 ),
               ),
 
-            // Highlights grid (3x2)
             if (!p.isLoading && p.error == null && highlights.isNotEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -415,13 +345,12 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: _NewsGridSection(
                     items: highlights,
-                    onTap: (it) => _openItem(context, it),
+                    onTap: (it) => _openContent(context, it),
                   ),
                 ),
               ),
 
-            // More news list (NewsCard)
-            if (!p.isLoading && p.error == null && more.isNotEmpty)
+            if (!p.isLoading && p.error == null && moreList.isNotEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(12, 14, 12, 8),
@@ -432,26 +361,334 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                 ),
               ),
 
-            if (!p.isLoading && p.error == null && more.isNotEmpty)
+            if (!p.isLoading && p.error == null && moreList.isNotEmpty)
               SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, i) {
-                    final item = more[i];
+                    final item = moreList[i];
                     return NewsCard(
                       item: item,
-                      onTap: () => _openItem(context, item),
+                      onTap: () => _openContent(context, item),
                       leadingAvatar: _SourceAvatar(
                         iconUrl: item.sourceIconUrl,
-                        fallbackText: (item.sourceName ?? "S"),
+                        fallbackText: item.sourceName.isNotEmpty ? item.sourceName : "S",
                       ),
                     );
                   },
-                  childCount: more.length,
+                  childCount: moreList.length,
                 ),
               ),
 
             const SliverToBoxAdapter(child: SizedBox(height: 18)),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ------------------------------
+// UI helpers
+// ------------------------------
+
+class _PinnedFiltersBar extends StatelessWidget {
+  final String title;
+  final VoidCallback onOpenMenu;
+
+  const _PinnedFiltersBar({
+    required this.title,
+    required this.onOpenMenu,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.watch<NewsProvider>();
+
+    final cat = p.selectedCategory;
+
+    final active = p.filteredSources.where((s) => s.isActive).toList()
+      ..sort((a, b) {
+        final t = b.trustLevel.compareTo(a.trustLevel);
+        if (t != 0) return t;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+
+    final singleSelectedId =
+        (p.selectedSourceIds.length == 1) ? p.selectedSourceIds.first : null;
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      alignment: Alignment.center,
+      child: Row(
+        children: [
+          SizedBox(
+            height: 36,
+            child: OutlinedButton.icon(
+              onPressed: onOpenMenu,
+              icon: const Icon(Icons.filter_alt_outlined, size: 18),
+              label: const Text("Filter"),
+              style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            flex: 0,
+            child: Text(
+              cat,
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 10),
+
+          Expanded(
+            child: SizedBox(
+              height: 40,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                itemCount: 1 + active.length,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: _IconOnlyChip(
+                        tooltip: "All sources",
+                        selected: p.isAllSelected,
+                        imageUrl: null,
+                        fallbackLetter: "A",
+                        onTap: () => p.selectOnlySource(null),
+                      ),
+                    );
+                  }
+
+                  final s = active[index - 1];
+                  final selected =
+                      (singleSelectedId != null && singleSelectedId == s.id);
+
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: _IconOnlyChip(
+                      tooltip: s.name,
+                      selected: selected,
+                      imageUrl: s.iconUrl,
+                      fallbackLetter: (s.name.isNotEmpty ? s.name[0].toUpperCase() : "S"),
+                      onTap: () => p.selectOnlySource(s.id),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
+          if (p.isSilentRefreshing)
+            const Padding(
+              padding: EdgeInsets.only(left: 8),
+              child: Icon(Icons.sync, size: 18),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CombinedFiltersSheet extends StatefulWidget {
+  const _CombinedFiltersSheet();
+
+  @override
+  State<_CombinedFiltersSheet> createState() => _CombinedFiltersSheetState();
+}
+
+class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.watch<NewsProvider>();
+    final q = _controller.text.trim().toLowerCase();
+
+    final sources = p.filteredSources.where((s) {
+      if (!s.isActive) return false;
+      if (q.isEmpty) return true;
+      return s.name.toLowerCase().contains(q);
+    }).toList();
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 14,
+          right: 14,
+          top: 10,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 12,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  "Category & Sources",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+                const Spacer(),
+                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                "Categories",
+                style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w800),
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: p.categories.map((c) {
+                final isSel = p.selectedCategory.toLowerCase() == c.toLowerCase();
+                return ChoiceChip(
+                  label: Text(c),
+                  selected: isSel,
+                  onSelected: (_) async {
+                    await p.setCategory(c);
+                    setState(() {});
+                  },
+                  selectedColor: const Color(0xFF1565C0).withAlpha(26),
+                  labelStyle: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    color: isSel ? const Color(0xFF1565C0) : Colors.black87,
+                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                );
+              }).toList(),
+            ),
+
+            const SizedBox(height: 14),
+
+            TextField(
+              controller: _controller,
+              decoration: const InputDecoration(hintText: "Search sources…", prefixIcon: Icon(Icons.search)),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 10),
+
+            Row(
+              children: [
+                TextButton(onPressed: () => p.clearSources(), child: const Text("Clear sources")),
+                const Spacer(),
+                ElevatedButton(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await p.applySourceSelection();
+                  },
+                  child: const Text("Apply"),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 6),
+
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: sources.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (_, i) {
+                  final s = sources[i];
+                  final checked = p.selectedSourceIds.contains(s.id);
+
+                  return CheckboxListTile(
+                    value: checked,
+                    onChanged: (_) => p.toggleSource(s.id),
+                    title: Text(s.name),
+                    secondary: _SourceAvatar(iconUrl: s.iconUrl, fallbackText: s.name),
+                    controlAffinity: ListTileControlAffinity.trailing,
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HeaderDelegate extends SliverPersistentHeaderDelegate {
+  final double height;
+  final Widget child;
+
+  _HeaderDelegate({required this.height, required this.child});
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
+      SizedBox(height: height, child: child);
+
+  @override
+  bool shouldRebuild(covariant _HeaderDelegate old) =>
+      old.height != height || old.child != child;
+}
+
+class _IconOnlyChip extends StatelessWidget {
+  final bool selected;
+  final String? imageUrl;
+  final String fallbackLetter;
+  final VoidCallback onTap;
+  final String tooltip;
+
+  const _IconOnlyChip({
+    required this.selected,
+    required this.imageUrl,
+    required this.fallbackLetter,
+    required this.onTap,
+    required this.tooltip,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final url = (imageUrl ?? "").trim();
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? const Color(0xFF1565C0) : Colors.transparent,
+              width: 2,
+            ),
+          ),
+          child: CircleAvatar(
+            radius: 16,
+            backgroundColor: Colors.grey.shade200,
+            backgroundImage: url.isNotEmpty ? CachedNetworkImageProvider(url) : null,
+            child: url.isEmpty
+                ? Text(fallbackLetter, style: const TextStyle(fontWeight: FontWeight.w900))
+                : null,
+          ),
         ),
       ),
     );
@@ -466,9 +703,9 @@ class _BreakingPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.red.withOpacity(0.10),
+        color: Colors.red.withAlpha(25),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.red.withOpacity(0.35)),
+        border: Border.all(color: Colors.red.withAlpha(90)),
       ),
       child: const Text(
         "BREAKING",
@@ -486,16 +723,12 @@ class _BreakingHero extends StatelessWidget {
   final NewsItem item;
   final String timeAgo;
   final VoidCallback onOpen;
-  final VoidCallback? onPrev;
-  final VoidCallback? onNext;
 
   const _BreakingHero({
     super.key,
     required this.item,
     required this.timeAgo,
     required this.onOpen,
-    this.onPrev,
-    this.onNext,
   });
 
   @override
@@ -503,102 +736,82 @@ class _BreakingHero extends StatelessWidget {
     final theme = Theme.of(context);
     final img = (item.imageUrl ?? "").trim();
     final sourceIcon = (item.sourceIconUrl ?? "").trim();
-    final sourceName = (item.sourceName ?? "Source").trim();
+    final sourceName = (item.sourceName).trim().isEmpty ? "Source" : item.sourceName.trim();
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 550),
-      switchInCurve: Curves.easeOut,
-      switchOutCurve: Curves.easeIn,
-      transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
-      child: Container(
-        key: ValueKey(item.url),
-        height: 320,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(22),
-          boxShadow: [
-            BoxShadow(
-              blurRadius: 18,
-              spreadRadius: 0,
-              color: Colors.black.withOpacity(0.08),
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(22),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (img.isNotEmpty)
-                CachedNetworkImage(
-                  imageUrl: img,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => Container(
-                    color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.6),
-                  ),
-                  errorWidget: (_, __, ___) => Container(
-                    color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.6),
-                    alignment: Alignment.center,
-                    child: const Icon(Icons.broken_image_outlined),
-                  ),
-                )
-              else
-                Container(
-                  color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.6),
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.image_not_supported_outlined),
-                ),
-
-              Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.black12, Colors.black54, Colors.black87],
-                  ),
-                ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          height: 320,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                blurRadius: 18,
+                color: Colors.black.withAlpha(20),
+                offset: const Offset(0, 10),
               ),
-
-              // Top overlay with arrows (tap-safe)
-              Positioned(
-                left: 12,
-                right: 12,
-                top: 12,
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: const Text(
-                        "BREAKING",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.6,
-                          fontSize: 12,
-                        ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (img.isNotEmpty)
+                  CachedNetworkImage(
+                    imageUrl: img,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(
+                      color: theme.colorScheme.surfaceContainerHighest.withAlpha(150),
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      color: theme.colorScheme.surfaceContainerHighest.withAlpha(150),
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.broken_image_outlined),
+                    ),
+                  )
+                else
+                  Container(
+                    color: theme.colorScheme.surfaceContainerHighest.withAlpha(150),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.image_not_supported_outlined),
+                  ),
+                Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.black12, Colors.black54, Colors.black87],
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 12,
+                  top: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      "BREAKING",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.6,
+                        fontSize: 12,
                       ),
                     ),
-                    const Spacer(),
-                    if (onPrev != null) _NavCircleButton(icon: Icons.chevron_left, onTap: onPrev!),
-                    if (onNext != null) ...[
-                      const SizedBox(width: 8),
-                      _NavCircleButton(icon: Icons.chevron_right, onTap: onNext!),
-                    ],
-                  ],
+                  ),
                 ),
-              ),
-
-              // Bottom overlay (open only here)
-              Positioned(
-                left: 14,
-                right: 14,
-                bottom: 14,
-                child: GestureDetector(
-                  onTap: onOpen,
+                Positioned(
+                  left: 14,
+                  right: 14,
+                  bottom: 14,
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
@@ -646,8 +859,8 @@ class _BreakingHero extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 10),
-                            Row(
-                              children: const [
+                            const Row(
+                              children: [
                                 Icon(Icons.open_in_new, color: Colors.white70, size: 16),
                                 SizedBox(width: 6),
                                 Text(
@@ -665,15 +878,8 @@ class _BreakingHero extends StatelessWidget {
                     ],
                   ),
                 ),
-              ),
-
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: Colors.white.withOpacity(0.06)),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -681,59 +887,6 @@ class _BreakingHero extends StatelessWidget {
   }
 }
 
-class _NavCircleButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _NavCircleButton({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black54,
-      shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Icon(icon, color: Colors.white, size: 22),
-        ),
-      ),
-    );
-  }
-}
-
-// Small avatar used in More News list (matches your NewsScreen behavior)
-class _SourceAvatar extends StatelessWidget {
-  final String? iconUrl;
-  final String fallbackText;
-
-  const _SourceAvatar({
-    required this.iconUrl,
-    required this.fallbackText,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final url = (iconUrl ?? "").trim();
-    final hasIcon = url.isNotEmpty;
-
-    if (hasIcon) {
-      return CircleAvatar(
-        backgroundColor: Colors.transparent,
-        backgroundImage: CachedNetworkImageProvider(url),
-      );
-    }
-
-    final letter = fallbackText.isNotEmpty ? fallbackText[0].toUpperCase() : "?";
-    return CircleAvatar(
-      child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w800)),
-    );
-  }
-}
-
-// Hero avatar (white ring)
 class _HeroSourceAvatar extends StatelessWidget {
   final String iconUrl;
   final String fallbackText;
@@ -764,8 +917,28 @@ class _HeroSourceAvatar extends StatelessWidget {
   }
 }
 
+class _SourceAvatar extends StatelessWidget {
+  final String? iconUrl;
+  final String fallbackText;
+
+  const _SourceAvatar({required this.iconUrl, required this.fallbackText});
+
+  @override
+  Widget build(BuildContext context) {
+    final url = (iconUrl ?? "").trim();
+    if (url.isNotEmpty) {
+      return CircleAvatar(
+        backgroundColor: Colors.transparent,
+        backgroundImage: CachedNetworkImageProvider(url),
+      );
+    }
+    final letter = fallbackText.isNotEmpty ? fallbackText[0].toUpperCase() : "?";
+    return CircleAvatar(child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w800)));
+  }
+}
+
 class _NewsGridSection extends StatelessWidget {
-  final List<NewsItem> items; // expects <= 6
+  final List<NewsItem> items;
   final void Function(NewsItem item) onTap;
 
   const _NewsGridSection({required this.items, required this.onTap});
@@ -802,6 +975,7 @@ class _MiniGridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final img = (item.imageUrl ?? "").trim();
     final iconUrl = (item.sourceIconUrl ?? "").trim();
+    final srcName = item.sourceName.trim().isEmpty ? "S" : item.sourceName.trim();
 
     return InkWell(
       onTap: onTap,
@@ -810,10 +984,7 @@ class _MiniGridCard extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-            ),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -848,11 +1019,7 @@ class _MiniGridCard extends StatelessWidget {
                       item.title,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w400,
-                        height: 1.15,
-                      ),
+                      style: const TextStyle(fontSize: 11.5, height: 1.15),
                     ),
                   ),
                 ),
@@ -862,10 +1029,7 @@ class _MiniGridCard extends StatelessWidget {
           Positioned(
             top: -8,
             right: -8,
-            child: _GridSourceAvatar(
-              iconUrl: iconUrl,
-              fallbackText: item.sourceName ?? "S",
-            ),
+            child: _GridSourceAvatar(iconUrl: iconUrl, fallbackText: srcName),
           ),
         ],
       ),
@@ -877,10 +1041,7 @@ class _GridSourceAvatar extends StatelessWidget {
   final String iconUrl;
   final String fallbackText;
 
-  const _GridSourceAvatar({
-    required this.iconUrl,
-    required this.fallbackText,
-  });
+  const _GridSourceAvatar({required this.iconUrl, required this.fallbackText});
 
   @override
   Widget build(BuildContext context) {
@@ -894,7 +1055,6 @@ class _GridSourceAvatar extends StatelessWidget {
         ),
       );
     }
-
     final letter = fallbackText.isNotEmpty ? fallbackText[0].toUpperCase() : "?";
     return CircleAvatar(
       radius: 14,
@@ -904,291 +1064,5 @@ class _GridSourceAvatar extends StatelessWidget {
         child: Text(letter, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
       ),
     );
-  }
-}
-
-class _ChipsHeaderDelegate extends SliverPersistentHeaderDelegate {
-  final double height;
-  final Widget child;
-
-  _ChipsHeaderDelegate({required this.height, required this.child});
-
-  @override
-  double get minExtent => height;
-
-  @override
-  double get maxExtent => height;
-
-  @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
-    return SizedBox(
-      height: height,
-      child: Container(
-        color: Colors.white,
-        alignment: Alignment.center,
-        child: child,
-      ),
-    );
-  }
-
-  @override
-  bool shouldRebuild(covariant _ChipsHeaderDelegate old) {
-    return old.height != height || old.child != child;
-  }
-}
-
-class _PinnedChipsRow extends StatelessWidget {
-  final VoidCallback onOpenPicker;
-  const _PinnedChipsRow({required this.onOpenPicker});
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.watch<NewsProvider>();
-
-    final active = p.sources.where((s) => s.isActive).toList();
-
-    active.sort((a, b) {
-      final t = b.trustLevel.compareTo(a.trustLevel);
-      if (t != 0) return t;
-      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    });
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: LayoutBuilder(
-        builder: (context, c) {
-          const sourcesBtnWidth = 92.0;
-          const gap = 10.0;
-
-          const iconRadius = 16.0;
-          const borderPad = 2.0;
-          const iconTileWidth = (iconRadius * 2) + (borderPad * 2);
-
-          final available = (c.maxWidth - sourcesBtnWidth - gap).clamp(0, c.maxWidth);
-          final maxSlots = (available / (iconTileWidth + gap)).floor().clamp(1, 10);
-
-          final sourceSlots = (maxSlots - 1).clamp(0, 10);
-          final shownSources = active.take(sourceSlots).toList();
-
-          return Row(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  child: Row(
-                    children: [
-                      _IconOnlyChip(
-                        tooltip: "All sources",
-                        selected: p.isAllSelected,
-                        imageUrl: null,
-                        fallbackLetter: "A",
-                        onTap: () => p.selectOnlySource(null),
-                      ),
-                      const SizedBox(width: gap),
-                      ...shownSources.map((s) {
-                        final selected =
-                            p.selectedSourceIds.length == 1 && p.selectedSourceIds.contains(s.id);
-
-                        return Padding(
-                          padding: const EdgeInsets.only(right: gap),
-                          child: _IconOnlyChip(
-                            tooltip: s.name,
-                            selected: selected,
-                            imageUrl: s.iconUrl,
-                            fallbackLetter: (s.name.isNotEmpty ? s.name[0].toUpperCase() : "S"),
-                            onTap: () => p.selectOnlySource(s.id),
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: gap),
-              SizedBox(
-                width: sourcesBtnWidth,
-                height: 36,
-                child: OutlinedButton.icon(
-                  onPressed: onOpenPicker,
-                  icon: const Icon(Icons.tune, size: 18),
-                  label: Text(
-                    p.selectedSourceIds.isEmpty ? "Sources" : "${p.selectedSourceIds.length}",
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _IconOnlyChip extends StatelessWidget {
-  final bool selected;
-  final String? imageUrl;
-  final String fallbackLetter;
-  final VoidCallback onTap;
-  final String tooltip;
-
-  const _IconOnlyChip({
-    required this.selected,
-    required this.imageUrl,
-    required this.fallbackLetter,
-    required this.onTap,
-    required this.tooltip,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final url = (imageUrl ?? "").trim();
-
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          padding: const EdgeInsets.all(2),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: selected ? const Color(0xFF1565C0) : Colors.transparent,
-              width: 2,
-            ),
-          ),
-          child: CircleAvatar(
-            radius: 16,
-            backgroundColor: Colors.grey.shade200,
-            backgroundImage: url.isNotEmpty ? CachedNetworkImageProvider(url) : null,
-            child: url.isEmpty
-                ? Text(
-                    fallbackLetter,
-                    style: const TextStyle(fontWeight: FontWeight.w900),
-                  )
-                : null,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SourcesPickerSheet extends StatefulWidget {
-  const _SourcesPickerSheet();
-
-  @override
-  State<_SourcesPickerSheet> createState() => _SourcesPickerSheetState();
-}
-
-class _SourcesPickerSheetState extends State<_SourcesPickerSheet> {
-  final _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.watch<NewsProvider>();
-
-    final q = _controller.text.trim().toLowerCase();
-    final filtered = p.sources.where((s) {
-      if (!s.isActive) return false;
-      if (q.isEmpty) return true;
-      return s.name.toLowerCase().contains(q);
-    }).toList();
-
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 14,
-          right: 14,
-          top: 10,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 12,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _controller,
-              decoration: const InputDecoration(
-                hintText: "Search sources…",
-                prefixIcon: Icon(Icons.search),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                TextButton(
-                  onPressed: () => p.clearSources(),
-                  child: const Text("Clear"),
-                ),
-                const Spacer(),
-                ElevatedButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await p.applySourceSelection();
-                  },
-                  child: const Text("Apply"),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: filtered.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final s = filtered[i];
-                  final checked = p.selectedSourceIds.contains(s.id);
-
-                  return CheckboxListTile(
-                    value: checked,
-                    onChanged: (_) => p.toggleSource(s.id),
-                    title: Text(s.name),
-                    secondary: _PickerSourceAvatar(iconUrl: s.iconUrl, fallbackText: s.name),
-                    controlAffinity: ListTileControlAffinity.trailing,
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PickerSourceAvatar extends StatelessWidget {
-  final String? iconUrl;
-  final String fallbackText;
-
-  const _PickerSourceAvatar({
-    required this.iconUrl,
-    required this.fallbackText,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final url = (iconUrl ?? "").trim();
-    if (url.isNotEmpty) {
-      return CircleAvatar(
-        backgroundColor: Colors.transparent,
-        backgroundImage: CachedNetworkImageProvider(url),
-      );
-    }
-    final letter = fallbackText.isNotEmpty ? fallbackText[0].toUpperCase() : "?";
-    return CircleAvatar(child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w800)));
   }
 }

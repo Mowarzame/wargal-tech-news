@@ -322,11 +322,14 @@ Future<List<NewsItem>> getNews({String? sourceId}) async {
 }
 
 
-Future<List<NewsSource>> getNewsSources() async {
-  final res = await http.get(
-    Uri.parse("${AppConfig.apiBaseUrl}/news-sources"),
-    headers: await _headers(),
+Future<List<NewsSource>> getNewsSources({String? category}) async {
+  final uri = Uri.parse("${AppConfig.apiBaseUrl}/news-sources").replace(
+    queryParameters: {
+      if (category != null && category.trim().isNotEmpty) "category": category.trim(),
+    },
   );
+
+  final res = await http.get(uri, headers: await _headers());
 
   if (res.statusCode == 200) {
     final body = jsonDecode(res.body);
@@ -405,12 +408,14 @@ Future<List<Post>> getMyPosts() async {
 }
 
 // Feed Items (aggregated news)
+// Feed Items (aggregated news)
 Future<List<NewsItem>> getFeedItems({
   int page = 1,
   int pageSize = 20,
   String? kind,        // "Article" or "Video" (optional)
   String? sourceId,
   String? q,
+  String? category,    // ✅ NEW
 }) async {
   final uri = Uri.parse("${AppConfig.apiBaseUrl}/feed-items").replace(
     queryParameters: {
@@ -419,6 +424,7 @@ Future<List<NewsItem>> getFeedItems({
       if (kind != null && kind.isNotEmpty) "kind": kind,
       if (sourceId != null && sourceId.isNotEmpty) "sourceId": sourceId,
       if (q != null && q.trim().isNotEmpty) "q": q.trim(),
+      if (category != null && category.trim().isNotEmpty) "category": category.trim(), // ✅ NEW
     },
   );
 

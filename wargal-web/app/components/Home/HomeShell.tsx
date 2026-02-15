@@ -1,9 +1,15 @@
 // ==============================
 // File: wargal-web/app/components/Home/HomeShell.tsx
-// ✅ Update: if article iframe is blocked, show ONLY the "Open in new tab" button
-// - No warning message
-// - No broken iframe screen
-// - Keeps existing UI everywhere else
+// ✅ FIX: Selecting a category now affects EVERYTHING:
+//    - Breaking slideshow
+//    - Highlights
+//    - Latest (right + mobile)
+//    - More Stories
+//    - Categories lanes
+//    - All News grid
+// ✅ Still keeps Sources filtering (by category + selected sources)
+// ✅ Auto-refresh merges newest items on top
+// ✅ “time ago” updates every 60s + on refresh
 // ==============================
 "use client";
 
@@ -382,12 +388,15 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sourceCategory, setSourceCategory] = useState<string>("All");
 
+  // ✅ This is the category menu in the Breaking header (global content category filter)
   const [breakingCategory, setBreakingCategory] = useState<string>("All");
   const [breakingAnchor, setBreakingAnchor] = useState<null | HTMLElement>(null);
 
   const [sourcesOpen, setSourcesOpen] = useState(false);
-
   const [openItem, setOpenItem] = useState<NewsItem | null>(null);
+
+  // ✅ Force “time ago” updates (every 60s + on refresh)
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
   // ✅ Mobile related collapsible
   const [mobileRelatedOpen, setMobileRelatedOpen] = useState(false);
@@ -395,9 +404,25 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     if (isMobile) setMobileRelatedOpen(false);
   }, [openItem?.id, openItem?.url, isMobile]);
 
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const selectedSet = useMemo(() => new Set((selectedIds ?? []).map(String)), [selectedIds]);
   const isAllSources = selectedIds.length === 0;
   const isSingleSource = selectedIds.length === 1;
+
+  // ✅ Sources-side category (in SourcesPanel) -> determines which source IDs are allowed
+  const allowedSourceIdSet = useMemo(() => {
+    if (sourceCategory === "All") return null;
+    const set = new Set<string>();
+    for (const s of allSources ?? []) {
+      const cat = clean(s?.category) || "News";
+      if (cat === sourceCategory) set.add(String(s?.id ?? ""));
+    }
+    return set;
+  }, [allSources, sourceCategory]);
 
   // Auto refresh
   useEffect(() => {
@@ -419,6 +444,9 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
         }
 
         setAllItems((prev) => mergeTop(prev ?? [], (feed ?? []).filter(Boolean)));
+
+        // ✅ bump relative times
+        setNowTick(Date.now());
       } finally {
         if (alive) setRefreshing(false);
       }
@@ -446,6 +474,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceCategories.join("|")]);
 
+  // ✅ Global content categories derived from categoryBySourceId (your existing mapping)
   const breakingCategories = useMemo(() => {
     const set = new Set<string>();
     for (const k of Object.keys(categoryBySourceId ?? {})) {
@@ -474,23 +503,36 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     return byCat.filter((s) => clean(s.name).toLowerCase().includes(query));
   }, [allSources, q, sourceCategory]);
 
-  const filteredItemsBySource = useMemo(() => {
+  // ✅ Step 1: apply Sources filters to items (sourceCategory + selectedIds)
+  const itemsAfterSourceFilters = useMemo(() => {
     const list = (allItems ?? []).filter(Boolean);
-    if (isAllSources) return list;
+
+    const inAllowedSourceCategory = (it: NewsItem) => {
+      if (!allowedSourceIdSet) return true;
+      const sid = clean(it?.sourceId);
+      if (!sid) return false;
+      return allowedSourceIdSet.has(String(sid));
+    };
+
+    if (isAllSources) return list.filter(inAllowedSourceCategory);
 
     return list.filter((it) => {
       const sid = clean(it?.sourceId);
-      return sid && selectedSet.has(String(sid));
+      if (!sid) return false;
+      if (!selectedSet.has(String(sid))) return false;
+      return inAllowedSourceCategory(it);
     });
-  }, [allItems, isAllSources, selectedSet]);
+  }, [allItems, allowedSourceIdSet, isAllSources, selectedSet]);
 
+  // ✅ Step 2: sort newest-first
   const sorted = useMemo(() => {
-    const list = [...filteredItemsBySource];
+    const list = [...itemsAfterSourceFilters];
     list.sort((a, b) => clean(b?.publishedAt).localeCompare(clean(a?.publishedAt)));
     return list;
-  }, [filteredItemsBySource]);
+  }, [itemsAfterSourceFilters]);
 
-  const sortedByCategory = useMemo(() => {
+  // ✅ Step 3: apply GLOBAL category (breakingCategory) to ALL sections
+  const categoryFilteredSorted = useMemo(() => {
     if (breakingCategory === "All") return sorted;
 
     return sorted.filter((it) => {
@@ -499,18 +541,11 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     });
   }, [sorted, breakingCategory, categoryBySourceId]);
 
-  // ✅ Breaking/Highlights/Latest/More Stories: category == "News" (includes YouTube if category is News)
-  const newsOnlySorted = useMemo(() => {
-    return (sorted ?? []).filter(Boolean).filter((it) => {
-      const cat = clean(categoryBySourceId[String(it?.sourceId ?? "")]) || "General";
-      return cat.toLowerCase() === "news";
-    });
-  }, [sorted, categoryBySourceId]);
-
+  // ✅ NOW every section uses categoryFilteredSorted
   const breakingItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
-    for (const it of newsOnlySorted) {
+    for (const it of categoryFilteredSorted) {
       const k = keyOf(it);
       if (!k || seen.has(k)) continue;
       seen.add(k);
@@ -518,14 +553,14 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
       if (out.length >= 6) break;
     }
     return out;
-  }, [newsOnlySorted]);
+  }, [categoryFilteredSorted]);
 
   const highlightItems = useMemo(() => breakingItems.slice(0, 6), [breakingItems]);
 
   const latestItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
-    for (const it of newsOnlySorted) {
+    for (const it of categoryFilteredSorted) {
       const k = keyOf(it);
       if (!k || seen.has(k)) continue;
       seen.add(k);
@@ -533,11 +568,17 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
       if (out.length >= 7) break;
     }
     return out;
-  }, [newsOnlySorted]);
+  }, [categoryFilteredSorted]);
 
-  const moreStories = useMemo(() => newsOnlySorted.slice(6, 30), [newsOnlySorted]);
+  const moreStories = useMemo(() => categoryFilteredSorted.slice(6, 30), [categoryFilteredSorted]);
 
-  const emptySingleSource = isSingleSource && sortedByCategory.length === 0;
+  // ✅ Categories lanes should show the current filtered feed, but still compute lanes by category name
+  const lanesItems = useMemo(() => categoryFilteredSorted, [categoryFilteredSorted]);
+
+  // ✅ All News grid initial items = current filtered feed
+  const allNewsInitial = useMemo(() => categoryFilteredSorted, [categoryFilteredSorted]);
+
+  const emptySingleSource = isSingleSource && categoryFilteredSorted.length === 0;
 
   const toggleSource = (id: string) => {
     const next = new Set(selectedSet);
@@ -578,7 +619,8 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     const baseUrl = clean(openItem?.url);
     const baseId = clean(openItem?.id);
 
-    const candidates = (sortedByCategory ?? [])
+    // ✅ related search stays within the same filtered universe (category+sources)
+    const candidates = (categoryFilteredSorted ?? [])
       .filter(Boolean)
       .filter((it) => it?.kind === 2)
       .filter((it) => safeUrl(it?.url))
@@ -620,13 +662,9 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     }
 
     return out;
-  }, [openItem, sortedByCategory]);
+  }, [openItem, categoryFilteredSorted]);
 
-  // ✅ Article embed-block detection:
-  // To prevent showing "refused to connect", we:
-  // 1) mount the iframe hidden
-  // 2) only show it after load + safe check
-  // 3) if blocked, we NEVER render the iframe again
+  // ✅ Article embed-block detection
   const articleIframeRef = useRef<HTMLIFrameElement | null>(null);
   const [articleEmbedBlocked, setArticleEmbedBlocked] = useState(false);
   const [articleIframeReady, setArticleIframeReady] = useState(false);
@@ -659,12 +697,11 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
         return;
       }
     } catch {
-      // Cross-origin access throws normally; ignore.
+      // ignore cross-origin
     }
 
     setArticleIframeReady(true);
 
-    // delayed second check (some browsers update error URL slightly later)
     setTimeout(() => {
       const el2 = articleIframeRef.current;
       if (!el2) return;
@@ -687,7 +724,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const closeBreakingMenu = () => setBreakingAnchor(null);
 
   return (
-    <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }}>
+    <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }} data-nowtick={nowTick}>
       <Box sx={{ px: { xs: 1.5, md: 2 }, py: 2 }}>
         {/* Small screens: selection summary + Sources button */}
         <Box
@@ -700,7 +737,8 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
         >
           <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
             {sourceCategory === "All" ? "All categories" : sourceCategory} ·{" "}
-            {isAllSources ? "All sources" : `${selectedIds.length} selected`}
+            {isAllSources ? "All sources" : `${selectedIds.length} selected`} ·{" "}
+            {breakingCategory === "All" ? "All feed" : breakingCategory}
           </Typography>
 
           <Box sx={{ flex: 1 }} />
@@ -821,12 +859,12 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                   No feed items available
                 </Typography>
                 <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                  This source currently has no articles/videos. Try another source or clear the filter.
+                  This source/category currently has no items. Try another category or clear filters.
                 </Typography>
               </Box>
             ) : (
               <>
-                {/* Breaking header + category menu next to it */}
+                {/* Breaking header + GLOBAL category menu */}
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
                   <Typography variant="h6" fontWeight={900} sx={{ lineHeight: 1 }}>
                     Breaking
@@ -844,7 +882,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                   <IconButton
                     onClick={openBreakingMenu}
                     size="small"
-                    aria-label="Open breaking category menu"
+                    aria-label="Open category menu"
                     sx={{
                       border: "1px solid",
                       borderColor: "divider",
@@ -904,7 +942,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                   Categories
                 </Typography>
                 <CategoryLanes
-                  items={sortedByCategory}
+                  items={lanesItems}
                   getCategory={(sourceId?: string) =>
                     clean(categoryBySourceId[String(sourceId ?? "")]) || "General"
                   }
@@ -916,7 +954,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                 </Typography>
                 <FilteredNewsGrid
                   selectedSourceIds={selectedIds}
-                  initialItems={sortedByCategory}
+                  initialItems={allNewsInitial}
                   pageSize={60}
                   selectedCategory={breakingCategory}
                   getCategory={(sourceId) =>
@@ -955,7 +993,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
         </Box>
       </Box>
 
-      {/* ✅ Modal (small screens: centered card, background visible) */}
+      {/* ✅ Modal */}
       <Dialog
         open={!!openItem}
         onClose={closeModal}
@@ -996,6 +1034,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
             {!!clean(openItem?.publishedAt) && (
               <TimeAgo
+                key={`${clean(openItem?.id) || clean(openItem?.url)}-${nowTick}`}
                 iso={openItem?.publishedAt}
                 variant="caption"
                 sx={{ color: "text.secondary", fontWeight: 900 }}
@@ -1038,7 +1077,6 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
               </Box>
             </Box>
           ) : isVideo ? (
-            // (video branch unchanged from your latest)
             <Box
               sx={{
                 display: "grid",
@@ -1082,7 +1120,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                   )}
                 </Box>
 
-                {/* small screens related: compact + max 3 */}
+                {/* small screens related: stacked single column */}
                 <Box
                   sx={{
                     display: { xs: "block", md: "none" },
@@ -1180,7 +1218,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                 </Box>
               </Box>
 
-              {/* desktop related (unchanged) */}
+              {/* desktop related */}
               <Box
                 sx={{
                   display: { xs: "none", md: "block" },
@@ -1258,9 +1296,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
               </Box>
             </Box>
           ) : (
-            // ✅ ARTICLE branch updated:
-            // - No warning message
-            // - If blocked: show ONLY the button (no iframe, no broken screen)
+            // ✅ ARTICLE branch (no warning message; if blocked, show only button)
             <Box
               sx={{
                 height: { xs: "70vh", sm: "100%" },
@@ -1269,7 +1305,6 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                 flexDirection: "column",
               }}
             >
-              {/* top bar: ONLY button */}
               <Box
                 sx={{
                   px: 2,

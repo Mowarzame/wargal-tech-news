@@ -25,7 +25,7 @@ class NewsCard extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
+        onTap: onTap, // ✅ ONLY callback, no navigation here
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -53,14 +53,12 @@ class NewsCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
               ],
-
               Text(
                 item.title,
                 style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
-
               if ((item.summary ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -70,28 +68,22 @@ class NewsCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
-
               const SizedBox(height: 10),
-
               Row(
                 children: [
                   if (leadingAvatar != null) ...[
                     leadingAvatar!,
                     const SizedBox(width: 8),
                   ],
-
                   Expanded(
                     child: Text(
-                      (item.sourceName ?? "Unknown").trim(),
+                      item.sourceName.trim(),
                       style: const TextStyle(fontWeight: FontWeight.w800),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-
                   const SizedBox(width: 10),
-
-                  // ✅ absolute + time ago (compact)
                   Text(
                     '${_formatDate(publishedLocal)} • ${_timeAgo(publishedLocal)}',
                     style: TextStyle(
@@ -103,7 +95,7 @@ class NewsCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
-              ),
+              )
             ],
           ),
         ),
@@ -111,27 +103,25 @@ class NewsCard extends StatelessWidget {
     );
   }
 
-  // Absolute time (your format, local)
   String _formatDate(DateTime dt) {
     String two(int v) => v.toString().padLeft(2, '0');
     return '${dt.year}-${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
   }
 
-  // Relative "time ago"
   String _timeAgo(DateTime dt) {
     final now = DateTime.now();
     final diff = now.difference(dt);
 
-    if (diff.inSeconds < 0) return 'just now'; // future edge case
+    if (diff.inSeconds < 0) return 'just now';
     if (diff.inSeconds < 60) return 'just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
 
-    final weeks = (diff.inDays / 7).floor();
-    if (weeks < 4) return '${weeks}w ago';
+    final w = (diff.inDays / 7).floor();
+    if (w < 4) return '${w}w ago';
 
-    final months = (diff.inDays / 30).floor();
-    return '${months}mo ago';
+    final mo = (diff.inDays / 30).floor();
+    return '${mo}mo ago';
   }
 }
