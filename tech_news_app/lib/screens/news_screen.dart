@@ -13,18 +13,54 @@ class NewsScreen extends StatefulWidget {
   const NewsScreen({super.key});
 
   @override
-  State<NewsScreen> createState() => _NewsScreenState();
+  NewsScreenState createState() => NewsScreenState();
 }
 
-class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
+/// ✅ Public State so AppShell can use GlobalKey<NewsScreenState>
+class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
   bool _inited = false;
 
   Timer? _autoRefreshTimer;
+
+  // ✅ Private controller (prevents multiple-attachment issues)
+  final ScrollController _scrollController = ScrollController();
 
   final PageController _pageController = PageController(viewportFraction: 0.92);
 
   int _lastTick = -1;
   int _lastSliderSig = 0;
+
+  // ✅ AppShell can call this
+  void scrollToTop({bool animated = true}) {
+    if (!_scrollController.hasClients) return;
+    if (!animated) {
+      _scrollController.jumpTo(0);
+      return;
+    }
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  // ✅ AppShell can call this
+  void onTabActivated({
+    required bool scrollTop,
+    required bool forceRefresh,
+    required bool resetSlider,
+  }) {
+    if (scrollTop) {
+      scrollToTop(animated: true);
+    }
+    if (resetSlider) {
+      _resetSliderToLatest();
+    }
+    if (forceRefresh) {
+      // ✅ "retap" refresh (manual feel)
+      context.read<NewsProvider>().refresh(silent: false);
+    }
+  }
 
   @override
   void initState() {
@@ -60,7 +96,8 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
-    _autoRefreshTimer = Timer.periodic(const Duration(minutes: 2), (_) async {
+    // ✅ 30 seconds background refresh
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       if (!mounted) return;
       await context.read<NewsProvider>().refresh(silent: true);
     });
@@ -76,6 +113,7 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _stopAutoRefresh();
     _pageController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -93,7 +131,6 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
   }
 
   int _sliderSignature(List<NewsItem> slider) {
-    // stable signature based on first URLs
     int h = 17;
     for (final it in slider) {
       h = 37 * h + it.url.hashCode;
@@ -109,11 +146,26 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
     });
   }
 
+  String _timeAgo(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+
+    final w = (diff.inDays / 7).floor();
+    if (w < 4) return '${w}w ago';
+
+    final mo = (diff.inDays / 30).floor();
+    return '${mo}mo ago';
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.watch<NewsProvider>();
 
-    // ✅ Always newest-first (provider already sorted, but keep safe)
     final items = p.items.toList()
       ..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
 
@@ -123,13 +175,11 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
     final discover = p.discoverItems.toList()
       ..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
 
-    // ✅ Reset slideshow back to latest when refresh happens
     if (_lastTick != p.refreshTick) {
       _lastTick = p.refreshTick;
       _resetSliderToLatest();
     }
 
-    // ✅ Also reset when slider content changes (filters, new data)
     final sig = _sliderSignature(slider);
     if (_lastSliderSig != sig) {
       _lastSliderSig = sig;
@@ -137,7 +187,6 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
     }
 
     // ✅ Highlights grid: fixed latest items (not tied to slide position)
-    // Use discover first, fallback items
     final seenGrid = <String>{};
     final grid = <NewsItem>[];
 
@@ -160,7 +209,6 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
       }
     }
 
-    // ✅ More news: fixed latest items (newest-first)
     final moreList = items;
 
     return Scaffold(
@@ -169,7 +217,7 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
         onRefresh: () => p.refresh(silent: false),
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          controller: p.scrollController,
+          controller: _scrollController,
           slivers: [
             SliverPersistentHeader(
               pinned: true,
@@ -187,10 +235,12 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                     pageController: _pageController,
                     items: slider.take(5).toList(),
                     onTap: (it) => _openModal(context, it),
+                    timeAgo: (dt) => _timeAgo(dt),
                   ),
                 ),
               ),
 
+            // ✅ Keep this loading indicator (even if it is split-second)
             if (p.isLoading)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -221,13 +271,14 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            // ✅ Highlights (grid)
             if (!p.isLoading && p.error == null && grid.isNotEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(12, 14, 12, 8),
-                  child: Text("Highlights",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                  child: Text(
+                    "Highlights",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  ),
                 ),
               ),
 
@@ -239,17 +290,17 @@ class _NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            // ✅ More news header always visible when we have items
             if (!p.isLoading && p.error == null && moreList.isNotEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(12, 14, 12, 8),
-                  child: Text("More news",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                  child: Text(
+                    "More news",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  ),
                 ),
               ),
 
-            // ✅ More news list fixed latest-first
             if (!p.isLoading && p.error == null && moreList.isNotEmpty)
               SliverList(
                 delegate: SliverChildBuilderDelegate(
@@ -292,7 +343,8 @@ class _PinnedTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.watch<NewsProvider>();
     final catLabel = p.selectedCategory;
-    final srcLabel = p.isAllSelected ? "All sources" : "${p.selectedSourceIds.length} sources";
+    final srcLabel =
+        p.isAllSelected ? "All sources" : "${p.selectedSourceIds.length} sources";
 
     return Container(
       color: Colors.white,
@@ -371,22 +423,29 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
           children: [
             Row(
               children: [
-                const Text("Filters", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                const Text(
+                  "Filters",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                ),
                 const Spacer(),
-                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
               ],
             ),
             const SizedBox(height: 8),
-
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 "Categories",
-                style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w800),
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
             const SizedBox(height: 8),
-
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -404,23 +463,28 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
                     fontWeight: FontWeight.w900,
                     color: isSel ? const Color(0xFF1565C0) : Colors.black87,
                   ),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                 );
               }).toList(),
             ),
-
             const SizedBox(height: 14),
-
             TextField(
               controller: _controller,
-              decoration: const InputDecoration(hintText: "Search sources…", prefixIcon: Icon(Icons.search)),
+              decoration: const InputDecoration(
+                hintText: "Search sources…",
+                prefixIcon: Icon(Icons.search),
+              ),
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 10),
-
             Row(
               children: [
-                TextButton(onPressed: () => p.clearSources(), child: const Text("Clear sources")),
+                TextButton(
+                  onPressed: () => p.clearSources(),
+                  child: const Text("Clear sources"),
+                ),
                 const Spacer(),
                 ElevatedButton(
                   onPressed: () async {
@@ -431,9 +495,7 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
                 ),
               ],
             ),
-
             const SizedBox(height: 6),
-
             Flexible(
               child: ListView.separated(
                 shrinkWrap: true,
@@ -477,7 +539,8 @@ class _HeaderDelegate extends SliverPersistentHeaderDelegate {
       SizedBox(height: height, child: child);
 
   @override
-  bool shouldRebuild(covariant _HeaderDelegate old) => old.height != height || old.child != child;
+  bool shouldRebuild(covariant _HeaderDelegate old) =>
+      old.height != height || old.child != child;
 }
 
 class _SourceAvatar extends StatelessWidget {
@@ -496,7 +559,9 @@ class _SourceAvatar extends StatelessWidget {
       );
     }
     final letter = fallbackText.isNotEmpty ? fallbackText[0].toUpperCase() : "?";
-    return CircleAvatar(child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w800)));
+    return CircleAvatar(
+      child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w800)),
+    );
   }
 }
 
@@ -550,7 +615,10 @@ class _MiniGridCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ClipRRect(
-                  borderRadius: const BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(16),
+                    topRight: Radius.circular(16),
+                  ),
                   child: AspectRatio(
                     aspectRatio: 16 / 9,
                     child: img.isEmpty
@@ -619,7 +687,10 @@ class _GridSourceAvatar extends StatelessWidget {
       backgroundColor: Colors.white,
       child: CircleAvatar(
         radius: 12,
-        child: Text(letter, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+        child: Text(
+          letter,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }
@@ -630,11 +701,13 @@ class _TopSlider extends StatelessWidget {
     required this.pageController,
     required this.items,
     required this.onTap,
+    required this.timeAgo,
   });
 
   final PageController pageController;
   final List<NewsItem> items;
   final void Function(NewsItem item) onTap;
+  final String Function(DateTime dt) timeAgo;
 
   @override
   Widget build(BuildContext context) {
@@ -648,6 +721,7 @@ class _TopSlider extends StatelessWidget {
         itemBuilder: (context, i) {
           final it = items[i];
           final img = (it.imageUrl ?? "").trim();
+          final ago = timeAgo(it.publishedAt.toLocal());
 
           return GestureDetector(
             onTap: () => onTap(it),
@@ -668,6 +742,25 @@ class _TopSlider extends StatelessWidget {
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
                           colors: [Colors.transparent, Colors.black54],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withAlpha(120),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          ago,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
                     ),

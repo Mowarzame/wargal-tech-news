@@ -1,5 +1,6 @@
 // ==============================
 // File: wargal-web/app/components/news/FilteredNewsGrid.tsx
+// ✅ Safeguard: respects selectedCategory strictly (HomeShell passes "News")
 // ==============================
 "use client";
 
@@ -158,6 +159,13 @@ export default function FilteredNewsGrid({
   const [openItem, setOpenItem] = useState<NewsItem | null>(null);
   const [visibleCount, setVisibleCount] = useState<number>(pageSize);
 
+  // ✅ Force “time ago” updates (every 60s)
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const [mobileRelatedOpen, setMobileRelatedOpen] = useState(false);
   useEffect(() => {
     if (isMobile) setMobileRelatedOpen(false);
@@ -196,7 +204,7 @@ export default function FilteredNewsGrid({
       const c =
         (getCategory ? clean(getCategory(sid)) : "") ||
         clean((it as any)?.sourceCategory) ||
-        "General";
+        "News";
       return c === cat;
     });
   }, [list, selectedSourceIds, selectedCategory, getCategory]);
@@ -262,11 +270,9 @@ export default function FilteredNewsGrid({
     return out;
   }, [openItem, displayItems]);
 
-  const relatedLimit = isMobile ? 3 : 4;
-
   return (
     <>
-      {/* GRID (unchanged) */}
+      {/* GRID */}
       <Box
         sx={{
           display: "grid",
@@ -319,22 +325,6 @@ export default function FilteredNewsGrid({
                   <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1 }}>
                     {source}
                   </Typography>
-
-                  {it?.kind === 2 && (
-                    <Box
-                      sx={{
-                        px: 0.9,
-                        py: 0.2,
-                        borderRadius: 999,
-                        bgcolor: "error.main",
-                        color: "common.white",
-                        fontSize: 11,
-                        fontWeight: 900,
-                      }}
-                    >
-                      Video
-                    </Box>
-                  )}
                 </Stack>
 
                 {!!clean(it?.publishedAt) && (
@@ -350,7 +340,7 @@ export default function FilteredNewsGrid({
         })}
       </Box>
 
-      {/* ✅ Load More */}
+      {/* Load More */}
       <Box sx={{ mt: 2, display: "flex", justifyContent: "center" }}>
         {canLoadMore ? (
           <Button
@@ -363,7 +353,7 @@ export default function FilteredNewsGrid({
         ) : null}
       </Box>
 
-      {/* ✅ Modal (small screens: centered, background visible, compact collapsible related max 3) */}
+      {/* Modal includes TimeAgo */}
       <Dialog
         open={!!openItem}
         onClose={closeModal}
@@ -400,6 +390,17 @@ export default function FilteredNewsGrid({
             <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
               {clean(openItem?.sourceName) || "Source"}
             </Typography>
+
+            <Box sx={{ flex: 1 }} />
+
+            {!!clean(openItem?.publishedAt) && (
+              <TimeAgo
+                key={`${clean(openItem?.id) || clean(openItem?.url)}-${nowTick}`}
+                iso={openItem?.publishedAt}
+                variant="caption"
+                sx={{ color: "text.secondary", fontWeight: 900 }}
+              />
+            )}
           </Stack>
         </DialogTitle>
 
@@ -418,219 +419,6 @@ export default function FilteredNewsGrid({
               <Typography color="text.secondary" sx={{ mt: 0.5 }}>
                 The feed item URL is missing or not a valid absolute URL.
               </Typography>
-            </Box>
-          ) : isVideo ? (
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) 360px" },
-                alignItems: "stretch",
-                bgcolor: "common.white",
-                height: { xs: "auto", sm: "100%" },
-              }}
-            >
-              {/* VIDEO COLUMN */}
-              <Box sx={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
-                <Box
-                  sx={{
-                    width: "100%",
-                    bgcolor: "black",
-                    flex: { xs: "0 0 auto", md: "1 1 auto" },
-                    minHeight: { md: 520 },
-                    aspectRatio: { xs: "16 / 9", md: "auto" } as any,
-                  }}
-                >
-                  {youtubeEmbedSrc ? (
-                    <Box
-                      component="iframe"
-                      src={youtubeEmbedSrc}
-                      title="YouTube video"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      allowFullScreen
-                      sx={{ width: "100%", height: "100%", border: 0, display: "block" }}
-                    />
-                  ) : (
-                    <Box sx={{ p: 3, color: "common.white" }}>
-                      <Typography fontWeight={950}>Video link detected but YouTube ID not found.</Typography>
-                      <Button
-                        variant="contained"
-                        startIcon={<OpenInNewIcon />}
-                        onClick={() => window.open(modalUrl, "_blank", "noopener,noreferrer")}
-                        sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999, mt: 2 }}
-                      >
-                        Open in new tab
-                      </Button>
-                    </Box>
-                  )}
-                </Box>
-
-                {/* Mobile/Small: collapsible related (max 3, compact) */}
-                <Box sx={{ display: { xs: "block", md: "none" }, bgcolor: "common.white", borderTop: "1px solid", borderColor: "divider" }}>
-                  <Box
-                    onClick={() => relatedVideos.length && setMobileRelatedOpen((v) => !v)}
-                    sx={{
-                      px: 2,
-                      py: 1.25,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                      cursor: relatedVideos.length ? "pointer" : "default",
-                      userSelect: "none",
-                    }}
-                  >
-                    <Typography fontWeight={950} sx={{ flex: 1 }}>
-                      Related videos{relatedVideos.length ? ` (${Math.min(3, relatedVideos.length)})` : ""}
-                    </Typography>
-
-                    {relatedVideos.length ? (
-                      <IconButton
-                        size="small"
-                        aria-label="Toggle related videos"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMobileRelatedOpen((v) => !v);
-                        }}
-                      >
-                        {mobileRelatedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                      </IconButton>
-                    ) : null}
-                  </Box>
-
-                  <Collapse in={mobileRelatedOpen} timeout={200} unmountOnExit>
-                    <Box sx={{ px: 2, pb: 1.5 }}>
-                      <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-                        {relatedVideos.slice(0, 3).map((rv, i) => {
-                          const title = clean(rv?.title) || "Video";
-                          const src = clean(rv?.sourceName) || "Source";
-                          const thumb = pickThumb(rv);
-
-                          return (
-                            <Box
-                              key={clean(rv?.id) || `${i}`}
-                              onClick={() => setOpenItem(rv)}
-                              sx={{
-                                display: "flex",
-                                gap: 1,
-                                alignItems: "center",
-                                border: "1px solid",
-                                borderColor: "divider",
-                                borderRadius: 2,
-                                p: 0.75,
-                                cursor: "pointer",
-                                "&:hover": { bgcolor: "grey.50" },
-                                minWidth: 0,
-                              }}
-                            >
-                              <Avatar src={thumb} sx={{ width: 30, height: 30 }}>
-                                {(src[0] ?? "V").toUpperCase()}
-                              </Avatar>
-
-                              <Box sx={{ minWidth: 0, flex: 1 }}>
-                                <Typography fontWeight={900} fontSize={12} noWrap>
-                                  {title}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary" noWrap>
-                                  {src}
-                                </Typography>
-                              </Box>
-
-                              <IconButton
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const u = safeUrl(rv?.url);
-                                  if (!u) return;
-                                  window.open(u, "_blank", "noopener,noreferrer");
-                                }}
-                                size="small"
-                                aria-label="Open in new tab"
-                              >
-                                <OpenInNewIcon sx={{ fontSize: 16 }} />
-                              </IconButton>
-                            </Box>
-                          );
-                        })}
-                      </Box>
-                    </Box>
-                  </Collapse>
-                </Box>
-              </Box>
-
-              {/* RIGHT: related videos (desktop/tablet) */}
-              <Box
-                sx={{
-                  display: { xs: "none", md: "block" },
-                  bgcolor: "common.white",
-                  borderLeft: "1px solid",
-                  borderColor: "divider",
-                  height: "100%",
-                  overflow: "hidden",
-                }}
-              >
-                <Box sx={{ p: 2 }}>
-                  <Typography fontWeight={950} sx={{ mb: 1 }}>
-                    Related videos
-                  </Typography>
-
-                  {relatedVideos.length === 0 ? (
-                    <Typography variant="caption" color="text.secondary">
-                      No related videos found for this title yet.
-                    </Typography>
-                  ) : (
-                    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                      {relatedVideos.slice(0, 4).map((rv, i) => {
-                        const title = clean(rv?.title) || "Video";
-                        const src = clean(rv?.sourceName) || "Source";
-                        const thumb = pickThumb(rv);
-
-                        return (
-                          <Box
-                            key={clean(rv?.id) || `${i}`}
-                            onClick={() => setOpenItem(rv)}
-                            sx={{
-                              display: "flex",
-                              gap: 1,
-                              alignItems: "center",
-                              border: "1px solid",
-                              borderColor: "divider",
-                              borderRadius: 2,
-                              p: 1,
-                              cursor: "pointer",
-                              "&:hover": { bgcolor: "grey.50" },
-                              minWidth: 0,
-                            }}
-                          >
-                            <Avatar src={thumb} sx={{ width: 36, height: 36 }}>
-                              {(src[0] ?? "V").toUpperCase()}
-                            </Avatar>
-
-                            <Box sx={{ minWidth: 0, flex: 1 }}>
-                              <Typography fontWeight={900} fontSize={13} noWrap>
-                                {title}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary" noWrap>
-                                {src}
-                              </Typography>
-                            </Box>
-
-                            <IconButton
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const u = safeUrl(rv?.url);
-                                if (!u) return;
-                                window.open(u, "_blank", "noopener,noreferrer");
-                              }}
-                              size="small"
-                              aria-label="Open in new tab"
-                            >
-                              <OpenInNewIcon sx={{ fontSize: 18 }} />
-                            </IconButton>
-                          </Box>
-                        );
-                      })}
-                    </Box>
-                  )}
-                </Box>
-              </Box>
             </Box>
           ) : (
             <Box

@@ -68,7 +68,7 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/icon/wargalIconAndLogo.png
+  image_path: assets/icon/logo.png
   adaptive_icon_background: "#1E4E7A"   # change to your brand color
   adaptive_icon_foreground: assets/icon/wargalIconAndLogo.png
 

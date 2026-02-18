@@ -1,150 +1,277 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
 import '../models/news_item.dart';
-import '../screens/youtube_watch_screen.dart';
 
 class ContentModal {
-  static void open(BuildContext context, NewsItem item) {
-    // ✅ Videos: open dedicated screen
-    if (item.kind == 2) {
-      final id = _extractYoutubeId(item);
-      if (id.isNotEmpty) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => YoutubeWatchScreen(videoId: id, title: item.title),
-          ),
-        );
-        return;
-      }
-      // fallback: open external
-      final raw = item.url.trim();
-      final uri = Uri.tryParse(raw);
-      if (uri != null) {
-        launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-      return;
-    }
-
-    // ✅ Articles: open modal
-    showDialog(
+  static Future<void> open(BuildContext context, NewsItem item) async {
+    await showDialog(
       context: context,
       barrierDismissible: true,
-      builder: (_) => _ContentModal(item: item),
+      builder: (_) => _ContentModalDialog(item: item),
     );
   }
-
-  static String _extractYoutubeId(NewsItem item) {
-    final id = (item.youtubeVideoId ?? "").trim();
-    if (id.isNotEmpty) return id;
-
-    final raw = item.url.trim();
-    final uri = Uri.tryParse(raw);
-    if (uri == null) return "";
-
-    if (uri.host.contains("youtu.be")) {
-      return uri.pathSegments.isNotEmpty ? uri.pathSegments.last : "";
-    }
-    if (uri.host.contains("youtube.com")) {
-      return uri.queryParameters["v"] ?? "";
-    }
-    return "";
-  }
 }
 
-class _ContentModal extends StatefulWidget {
-  const _ContentModal({required this.item});
-
+class _ContentModalDialog extends StatefulWidget {
   final NewsItem item;
+  const _ContentModalDialog({required this.item});
 
   @override
-  State<_ContentModal> createState() => _ContentModalState();
+  State<_ContentModalDialog> createState() => _ContentModalDialogState();
 }
 
-class _ContentModalState extends State<_ContentModal> {
+class _ContentModalDialogState extends State<_ContentModalDialog> {
   WebViewController? _web;
-  bool _loading = true;
+  YoutubePlayerController? _yt;
 
-  String get _rawUrl => widget.item.url.trim();
-  String get _sourceName => widget.item.sourceName;
+  bool _webLoading = true;
+
+  bool get _isYouTube {
+    final url = widget.item.url.trim();
+    final id = YoutubePlayer.convertUrlToId(url);
+    return id != null && id.isNotEmpty;
+  }
+
+  String _timeAgo(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+
+    final w = (diff.inDays / 7).floor();
+    if (w < 4) return '${w}w ago';
+
+    final mo = (diff.inDays / 30).floor();
+    return '${mo}mo ago';
+  }
 
   @override
   void initState() {
     super.initState();
-    _initWeb();
-  }
 
-  void _initWeb() {
-    final uri = Uri.tryParse(_rawUrl);
-    if (uri == null) {
-      setState(() => _loading = false);
+    final url = widget.item.url.trim();
+
+    // ✅ If YouTube: show ONLY the embedded player (no WebView)
+    final ytId = YoutubePlayer.convertUrlToId(url);
+    if (ytId != null && ytId.isNotEmpty) {
+      _yt = YoutubePlayerController(
+        initialVideoId: ytId,
+        flags: const YoutubePlayerFlags(
+          autoPlay: true,
+          mute: false,
+          disableDragSeek: false,
+          loop: false,
+          enableCaption: true,
+          forceHD: false,
+        ),
+      );
       return;
     }
 
-    _web = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (_) {
-            if (!mounted) return;
-            setState(() => _loading = false);
-          },
-        ),
-      )
-      ..loadRequest(uri);
-
-    setState(() => _loading = true);
+    // ✅ Non-YouTube: show publisher page in WebView
+    final parsed = Uri.tryParse(url);
+    if (parsed != null) {
+      _web = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageStarted: (_) {
+              if (!mounted) return;
+              setState(() => _webLoading = true);
+            },
+            onPageFinished: (_) {
+              if (!mounted) return;
+              setState(() => _webLoading = false);
+            },
+          ),
+        )
+        ..loadRequest(parsed);
+    }
   }
 
-  Future<void> _openExternal(Uri uri) async {
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  @override
+  void dispose() {
+    _yt?.dispose();
+    super.dispose();
+  }
+
+  Widget _buildSourceAvatar(String iconUrl, String sourceName) {
+    final url = iconUrl.trim();
+    if (url.isNotEmpty) {
+      return CircleAvatar(
+        radius: 18,
+        backgroundColor: Colors.grey.shade200,
+        backgroundImage: CachedNetworkImageProvider(url),
+      );
+    }
+
+    final letter = sourceName.isNotEmpty ? sourceName[0].toUpperCase() : "?";
+    return CircleAvatar(
+      radius: 18,
+      backgroundColor: Colors.grey.shade200,
+      child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w900)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final item = widget.item;
+
+    final img = (item.imageUrl ?? "").trim();
+    final icon = (item.sourceIconUrl ?? "").trim();
+    final sourceName =
+        item.sourceName.trim().isEmpty ? "Source" : item.sourceName.trim();
+    final ago = _timeAgo(item.publishedAt.toLocal());
+
+    final isYoutube = _isYouTube;
+
     return Dialog(
-      insetPadding: EdgeInsets.zero,
-      backgroundColor: Colors.white,
-      child: SafeArea(
-        child: Scaffold(
-          appBar: AppBar(
-            title: Text(
-              _sourceName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            leading: IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: () => Navigator.pop(context),
-            ),
-            actions: [
-              IconButton(
-                tooltip: "Open in browser",
-                onPressed: () => _openExternal(Uri.parse(_rawUrl)),
-                icon: const Icon(Icons.open_in_new),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Column(
+          children: [
+            // ✅ Header: source + time ago + title
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.fromLTRB(12, 12, 8, 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildSourceAvatar(icon, sourceName),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                sourceName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.w900),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              ago,
+                              style: TextStyle(
+                                color: Colors.grey.shade700,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          item.title,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: "Close",
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
               ),
-              IconButton(
-                tooltip: "Reload",
-                onPressed: () async {
-                  setState(() => _loading = true);
-                  await _web?.reload();
-                },
-                icon: const Icon(Icons.refresh),
+            ),
+
+            // ✅ Thumbnail (optional): keep it for non-youtube
+            if (img.isNotEmpty && !isYoutube)
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: CachedNetworkImage(
+                  imageUrl: img,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, __, ___) => Container(color: Colors.grey.shade200),
+                ),
               ),
-            ],
-          ),
-          body: Stack(
-            children: [
-              (_web == null)
-                  ? Center(child: Text("Invalid link: $_rawUrl"))
-                  : WebViewWidget(controller: _web!),
-              if (_loading) const LinearProgressIndicator(),
-            ],
-          ),
+
+            const Divider(height: 1),
+
+            // ✅ Body: YouTube -> ONLY player. Non-YouTube -> WebView
+            Expanded(
+              child: isYoutube
+                  ? _YoutubeOnlyBody(controller: _yt)
+                  : _WebBody(controller: _web, loading: _webLoading),
+            ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _YoutubeOnlyBody extends StatelessWidget {
+  final YoutubePlayerController? controller;
+  const _YoutubeOnlyBody({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    if (controller == null) {
+      return const Center(child: Text("Video not available."));
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: YoutubePlayer(
+          controller: controller!,
+          showVideoProgressIndicator: true,
+          onReady: () {
+            controller!.play();
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _WebBody extends StatelessWidget {
+  final WebViewController? controller;
+  final bool loading;
+  const _WebBody({required this.controller, required this.loading});
+
+  @override
+  Widget build(BuildContext context) {
+    if (controller == null) {
+      return const Center(child: Text("Unable to open this link."));
+    }
+
+    return Stack(
+      children: [
+        WebViewWidget(controller: controller!),
+        if (loading)
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: true,
+              child: Container(
+                color: Colors.white.withAlpha(160),
+                alignment: Alignment.center,
+                child: const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.2),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

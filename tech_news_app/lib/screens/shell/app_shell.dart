@@ -24,6 +24,11 @@ class _AppShellState extends State<AppShell> {
   int _index = 0;
   final _auth = AuthService();
 
+  // ✅ Typed keys (fixes: "_NewsScreenState isn't a type")
+  final GlobalKey<NewsScreenState> _newsKey = GlobalKey<NewsScreenState>();
+  final GlobalKey<BreakingNewsScreenState> _breakingKey =
+      GlobalKey<BreakingNewsScreenState>();
+
   bool get isAdmin => widget.role.toLowerCase() == "admin";
   bool get isEditor => widget.role.toLowerCase() == "editor";
 
@@ -31,7 +36,7 @@ class _AppShellState extends State<AppShell> {
     final home = _NavItem(
       label: "News",
       icon: Icons.home_outlined,
-      page: const NewsScreen(),
+      page: NewsScreen(key: _newsKey),
     );
 
     final explore = _NavItem(
@@ -47,7 +52,7 @@ class _AppShellState extends State<AppShell> {
     final breaking = _NavItem(
       label: "Breaking",
       icon: Icons.flash_on,
-      page: const BreakingNewsScreen(),
+      page: BreakingNewsScreen(key: _breakingKey),
     );
 
     final create = _NavItem(
@@ -68,15 +73,8 @@ class _AppShellState extends State<AppShell> {
       page: const EditorMyPostsScreen(),
     );
 
-    if (isAdmin) {
-      return [breaking, home, moderation, create, explore];
-    }
-
-    if (isEditor) {
-      return [breaking, home, explore, create, myPosts];
-    }
-
-    // User
+    if (isAdmin) return [breaking, home, moderation, create, explore];
+    if (isEditor) return [breaking, home, explore, create, myPosts];
     return [breaking, home, explore];
   }
 
@@ -90,6 +88,31 @@ class _AppShellState extends State<AppShell> {
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (_) => false,
     );
+  }
+
+  void _activateTab(_NavItem tab, {required bool isRetap}) {
+    // ✅ Always scroll-to-top on BOTH:
+    // - re-tap same tab
+    // - switching into tab from another tab
+    if (tab.label == "News") {
+      final st = _newsKey.currentState;
+      st?.onTabActivated(
+        scrollTop: true,
+        forceRefresh: isRetap, // ✅ refresh only on re-tap (keeps UI fast)
+        resetSlider: true,
+      );
+      return;
+    }
+
+    if (tab.label == "Breaking") {
+      final st = _breakingKey.currentState;
+      st?.onTabActivated(
+        scrollTop: true,
+        forceRefresh: isRetap, // ✅ refresh only on re-tap
+        resetSlider: true,
+      );
+      return;
+    }
   }
 
   @override
@@ -112,10 +135,16 @@ class _AppShellState extends State<AppShell> {
         onNavigate: (target) {
           Navigator.pop(context);
           if (target == _DrawerTarget.settings) {
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            );
           }
           if (target == _DrawerTarget.about) {
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen()));
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AboutScreen()),
+            );
           }
         },
       ),
@@ -125,10 +154,25 @@ class _AppShellState extends State<AppShell> {
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
         type: BottomNavigationBarType.fixed,
+        onTap: (i) {
+          final tappedTab = tabs[i];
+
+          // ✅ Re-tap same tab: activate (scrollTop + optional refresh)
+          if (i == _index) {
+            _activateTab(tappedTab, isRetap: true);
+            return;
+          }
+
+          // ✅ Switch tab then activate after frame
+          setState(() => _index = i);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _activateTab(tappedTab, isRetap: false); // ✅ also scrollTop on switch
+          });
+        },
         items: tabs
-            .map((t) => BottomNavigationBarItem(icon: Icon(t.icon), label: t.label))
+            .map((t) =>
+                BottomNavigationBarItem(icon: Icon(t.icon), label: t.label))
             .toList(),
       ),
     );
@@ -167,7 +211,8 @@ class _AppDrawer extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           children: [
             const SizedBox(height: 8),
-            const Text("Wargal", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            const Text("Wargal",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
             const SizedBox(height: 6),
             Text("Role: $role", style: TextStyle(color: Colors.grey.shade700)),
             const SizedBox(height: 14),

@@ -14,12 +14,16 @@ class BreakingNewsScreen extends StatefulWidget {
   const BreakingNewsScreen({super.key});
 
   @override
-  State<BreakingNewsScreen> createState() => _BreakingNewsScreenState();
+  BreakingNewsScreenState createState() => BreakingNewsScreenState();
 }
 
-class _BreakingNewsScreenState extends State<BreakingNewsScreen>
+/// ✅ Public State so AppShell can use GlobalKey<BreakingNewsScreenState>
+class BreakingNewsScreenState extends State<BreakingNewsScreen>
     with WidgetsBindingObserver {
   bool _inited = false;
+
+  // ✅ Private controller (prevents "attached to multiple scroll views")
+  final ScrollController _scrollController = ScrollController();
 
   Timer? _slideshowTimer;
   Timer? _autoRefreshTimer;
@@ -28,6 +32,41 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
   int _pos = 0;
 
   int _lastTick = -1;
+  int _lastQueueHash = 0;
+
+  // ✅ AppShell can call this
+  void scrollToTop({bool animated = true}) {
+    if (!_scrollController.hasClients) return;
+    if (!animated) {
+      _scrollController.jumpTo(0);
+      return;
+    }
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  // ✅ AppShell can call this
+  void onTabActivated({
+    required bool scrollTop,
+    required bool forceRefresh,
+    required bool resetSlider,
+  }) {
+    if (scrollTop) {
+      scrollToTop(animated: true);
+    }
+    if (forceRefresh) {
+      context.read<NewsProvider>().refresh(silent: false);
+    }
+    if (resetSlider) {
+      // reset to latest slide immediately
+      if (_queue.isNotEmpty) {
+        setState(() => _pos = 0);
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -43,8 +82,10 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
       _inited = true;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
+
         await context.read<NewsProvider>().init();
-        _startAutoRefresh();
+
+        _startAutoRefresh(); // ✅ 30 seconds
         _startOrStopSlideshow();
       });
     }
@@ -68,10 +109,9 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
-    _autoRefreshTimer = Timer.periodic(const Duration(minutes: 2), (_) async {
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       if (!mounted) return;
       await context.read<NewsProvider>().refresh(silent: true);
-      // slideshow reset is handled via refreshTick check in build()
     });
   }
 
@@ -86,6 +126,7 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
     _stopAutoRefresh();
     _slideshowTimer?.cancel();
     _slideshowTimer = null;
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -134,7 +175,6 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
     final now = DateTime.now();
     final diff = now.difference(dt);
 
-    if (diff.inSeconds < 0) return 'just now';
     if (diff.inSeconds < 60) return 'just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
@@ -160,10 +200,8 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
 
   List<NewsItem> _buildSlideQueue(List<NewsItem> latestSorted,
       {int maxSlides = 10}) {
-    // Must be newest-first already
     final unique = _dedupeByUrlKeepOrder(latestSorted);
 
-    // Optional: source mixing (keeps latest-first preference)
     final Map<String, Queue<NewsItem>> bySource = {};
     for (final it in unique) {
       final src =
@@ -195,10 +233,19 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
     return slides;
   }
 
+  int _queueHash(List<NewsItem> q) {
+    const n = 12;
+    int h = 17;
+    for (int i = 0; i < q.length && i < n; i++) {
+      h = 37 * h + q[i].url.hashCode;
+    }
+    h = 37 * h + q.length;
+    return h;
+  }
+
   void _setQueueAndResetToLatest(List<NewsItem> newQueue) {
     _queue = newQueue;
-    _pos = 0; // ✅ ALWAYS start from latest
-    // restart slideshow timer safely
+    _pos = 0;
     _slideshowTimer?.cancel();
     _slideshowTimer = null;
     _startOrStopSlideshow();
@@ -208,24 +255,26 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
   Widget build(BuildContext context) {
     final p = context.watch<NewsProvider>();
 
-    // ✅ Always newest-first (provider already sorted)
+    // ✅ Always newest-first
     final latest = p.items.toList()
       ..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
 
     final slideQueue = _buildSlideQueue(latest, maxSlides: 10);
+    final sig = _queueHash(slideQueue);
 
-    // ✅ If refresh happened (manual or auto), reset slideshow to latest
-    if (_lastTick != p.refreshTick) {
+    // ✅ Seed queue immediately (prevents blank slideshow frame)
+    if (_queue.isEmpty && slideQueue.isNotEmpty) {
+      _queue = slideQueue;
+      _pos = 0;
+      _startOrStopSlideshow();
+      _lastQueueHash = sig;
       _lastTick = p.refreshTick;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _setQueueAndResetToLatest(slideQueue);
-      });
     } else {
-      // If queue length/content changed (filters), still keep slideshow stable but start at latest
-      final oldSig = _queue.map((e) => e.url).join('|');
-      final newSig = slideQueue.map((e) => e.url).join('|');
-      if (oldSig != newSig) {
+      // ✅ Update queue when refresh happens or content changes
+      if (_lastTick != p.refreshTick || _lastQueueHash != sig) {
+        _lastTick = p.refreshTick;
+        _lastQueueHash = sig;
+
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           _setQueueAndResetToLatest(slideQueue);
@@ -238,17 +287,21 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
 
     final current = _queue.isNotEmpty ? _queue[_pos] : null;
 
-    // ✅ Highlights: FIXED latest items (not linked to _pos)
+    // ✅ Highlights fixed latest items
     final highlights = latest.take(6).toList();
 
-    // ✅ More news: FIXED latest items (not linked to _pos)
+    // ✅ More news fixed latest items
     final moreList = latest;
+
+    // ✅ Skeleton mode: loading AND no current slide yet
+    final showSkeleton = p.isLoading && current == null;
 
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
       body: RefreshIndicator(
         onRefresh: () => p.refresh(silent: false),
         child: CustomScrollView(
+          controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPersistentHeader(
@@ -291,14 +344,54 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
               ),
             ),
 
-            if (p.isLoading)
-              const SliverToBoxAdapter(
+            // ✅ Skeleton hero + sections while loading
+            if (showSkeleton)
+              SliverToBoxAdapter(
                 child: Padding(
-                  padding: EdgeInsets.only(top: 60),
-                  child: Center(child: CircularProgressIndicator()),
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 14),
+                  child: const _SkeletonHero(),
                 ),
               ),
 
+            if (showSkeleton)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(12, 2, 12, 8),
+                  child: Text(
+                    "Highlights",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+
+            if (showSkeleton)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: const _SkeletonGrid(),
+                ),
+              ),
+
+            if (showSkeleton)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(12, 14, 12, 8),
+                  child: Text(
+                    "More news",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+
+            if (showSkeleton)
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) => const _SkeletonListItem(),
+                  childCount: 8,
+                ),
+              ),
+
+            // ✅ Normal error state
             if (!p.isLoading && p.error != null)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -307,6 +400,7 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                 ),
               ),
 
+            // ✅ Normal empty state (only when not loading)
             if (!p.isLoading && p.error == null && current == null)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -315,6 +409,7 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                 ),
               ),
 
+            // ✅ Normal hero
             if (!p.isLoading && p.error == null && current != null)
               SliverToBoxAdapter(
                 child: Padding(
@@ -328,6 +423,7 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                 ),
               ),
 
+            // ✅ Normal highlights
             if (!p.isLoading && p.error == null && highlights.isNotEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -350,6 +446,7 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
                 ),
               ),
 
+            // ✅ Normal more news
             if (!p.isLoading && p.error == null && moreList.isNotEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -388,7 +485,174 @@ class _BreakingNewsScreenState extends State<BreakingNewsScreen>
 }
 
 // ------------------------------
-// UI helpers
+// Skeleton UI (no extra packages)
+// ------------------------------
+
+class _SkeletonBlock extends StatelessWidget {
+  final double height;
+  final double? width;
+  final BorderRadius borderRadius;
+
+  const _SkeletonBlock({
+    required this.height,
+    this.width,
+    this.borderRadius = const BorderRadius.all(Radius.circular(14)),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      width: width,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade300,
+        borderRadius: borderRadius,
+      ),
+    );
+  }
+}
+
+class _SkeletonHero extends StatelessWidget {
+  const _SkeletonHero();
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: Container(
+        height: 320,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade300,
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.grey.shade300,
+                      Colors.grey.shade300,
+                      Colors.grey.shade400,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 14,
+              bottom: 18,
+              right: 14,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: const [
+                      _SkeletonBlock(
+                        height: 26,
+                        width: 26,
+                        borderRadius: BorderRadius.all(Radius.circular(999)),
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(child: _SkeletonBlock(height: 14)),
+                      SizedBox(width: 10),
+                      _SkeletonBlock(height: 12, width: 54),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const _SkeletonBlock(height: 16),
+                  const SizedBox(height: 8),
+                  const _SkeletonBlock(height: 16),
+                  const SizedBox(height: 8),
+                  const _SkeletonBlock(height: 16, width: 220),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SkeletonGrid extends StatelessWidget {
+  const _SkeletonGrid();
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      itemCount: 6,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 0.95,
+      ),
+      itemBuilder: (_, __) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            color: Colors.white,
+            child: Column(
+              children: const [
+                _SkeletonBlock(height: 62, borderRadius: BorderRadius.zero),
+                SizedBox(height: 10),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: _SkeletonBlock(height: 12),
+                ),
+                SizedBox(height: 8),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: _SkeletonBlock(height: 12),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SkeletonListItem extends StatelessWidget {
+  const _SkeletonListItem();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Row(
+        children: const [
+          _SkeletonBlock(
+            height: 44,
+            width: 44,
+            borderRadius: BorderRadius.all(Radius.circular(999)),
+          ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SkeletonBlock(height: 12),
+                SizedBox(height: 8),
+                _SkeletonBlock(height: 12, width: 220),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------------------
+// Existing UI helpers (unchanged)
 // ------------------------------
 
 class _PinnedFiltersBar extends StatelessWidget {
@@ -443,7 +707,6 @@ class _PinnedFiltersBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-
           Expanded(
             child: SizedBox(
               height: 40,
@@ -483,7 +746,6 @@ class _PinnedFiltersBar extends StatelessWidget {
               ),
             ),
           ),
-
           if (p.isSilentRefreshing)
             const Padding(
               padding: EdgeInsets.only(left: 8),
@@ -544,7 +806,6 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
               ],
             ),
             const SizedBox(height: 10),
-
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
@@ -553,7 +814,6 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
               ),
             ),
             const SizedBox(height: 8),
-
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -575,16 +835,13 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
                 );
               }).toList(),
             ),
-
             const SizedBox(height: 14),
-
             TextField(
               controller: _controller,
               decoration: const InputDecoration(hintText: "Search sources…", prefixIcon: Icon(Icons.search)),
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 10),
-
             Row(
               children: [
                 TextButton(onPressed: () => p.clearSources(), child: const Text("Clear sources")),
@@ -598,9 +855,7 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
                 ),
               ],
             ),
-
             const SizedBox(height: 6),
-
             Flexible(
               child: ListView.separated(
                 shrinkWrap: true,
@@ -736,7 +991,12 @@ class _BreakingHero extends StatelessWidget {
     final theme = Theme.of(context);
     final img = (item.imageUrl ?? "").trim();
     final sourceIcon = (item.sourceIconUrl ?? "").trim();
-    final sourceName = (item.sourceName).trim().isEmpty ? "Source" : item.sourceName.trim();
+    final sourceName =
+        (item.sourceName).trim().isEmpty ? "Source" : item.sourceName.trim();
+
+    final w = MediaQuery.of(context).size.width;
+    final px = MediaQuery.of(context).devicePixelRatio;
+    final heroW = (w * px).round();
 
     return Material(
       color: Colors.transparent,
@@ -764,6 +1024,7 @@ class _BreakingHero extends StatelessWidget {
                   CachedNetworkImage(
                     imageUrl: img,
                     fit: BoxFit.cover,
+                    memCacheWidth: heroW,
                     placeholder: (_, __) => Container(
                       color: theme.colorScheme.surfaceContainerHighest.withAlpha(150),
                     ),
@@ -933,7 +1194,9 @@ class _SourceAvatar extends StatelessWidget {
       );
     }
     final letter = fallbackText.isNotEmpty ? fallbackText[0].toUpperCase() : "?";
-    return CircleAvatar(child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w800)));
+    return CircleAvatar(
+      child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w800)),
+    );
   }
 }
 
@@ -977,6 +1240,10 @@ class _MiniGridCard extends StatelessWidget {
     final iconUrl = (item.sourceIconUrl ?? "").trim();
     final srcName = item.sourceName.trim().isEmpty ? "S" : item.sourceName.trim();
 
+    final w = MediaQuery.of(context).size.width;
+    final px = MediaQuery.of(context).devicePixelRatio;
+    final thumbW = ((w / 3) * px).round();
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
@@ -1004,6 +1271,7 @@ class _MiniGridCard extends StatelessWidget {
                         : CachedNetworkImage(
                             imageUrl: img,
                             fit: BoxFit.cover,
+                            memCacheWidth: thumbW,
                             errorWidget: (_, __, ___) => Container(
                               color: Colors.grey.shade200,
                               alignment: Alignment.center,

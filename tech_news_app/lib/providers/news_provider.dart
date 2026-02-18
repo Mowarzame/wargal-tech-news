@@ -12,6 +12,7 @@ class NewsProvider extends ChangeNotifier {
   final ApiService _api;
 
   bool _inited = false;
+  bool _warming = false;
 
   // UI state
   bool isLoading = false;
@@ -22,13 +23,10 @@ class NewsProvider extends ChangeNotifier {
 
   String? error;
 
-  final ScrollController scrollController = ScrollController();
-
   // Data
   List<NewsItem> items = [];
   List<NewsItem> sliderItems = [];
   List<NewsItem> discoverItems = [];
-
   List<NewsSource> sources = [];
 
   // ✅ increments every time refresh completes (manual or auto)
@@ -37,7 +35,6 @@ class NewsProvider extends ChangeNotifier {
   // -----------------------------
   // Categories
   // -----------------------------
-  // ✅ Default is "News"
   final List<String> categories = const <String>[
     "All",
     "News",
@@ -54,12 +51,10 @@ class NewsProvider extends ChangeNotifier {
 
   // -----------------------------
   // Sources selection (multi-select)
-  // Empty selection means "All sources" (within the category)
   // -----------------------------
   final Set<String> selectedSourceIds = <String>{};
   bool get isAllSelected => selectedSourceIds.isEmpty;
 
-  // Sources filtered by selected category
   List<NewsSource> get filteredSources {
     final cat = _selectedCategory.trim().toLowerCase();
     if (cat.isEmpty || cat == "all") return sources;
@@ -68,20 +63,30 @@ class NewsProvider extends ChangeNotifier {
         .toList();
   }
 
-  // Effective sources to apply to fetching/content
   Set<String> get effectiveSourceIds {
     final inCategory = filteredSources.map((s) => s.id).toSet();
-
-    // If "All sources" is selected => all sources inside category
     if (selectedSourceIds.isEmpty) return inCategory;
 
-    // If user selected some sources => intersect with category sources
     final intersect = selectedSourceIds.intersection(inCategory);
-
-    // If none match (category changed), fall back to all sources in category
     if (intersect.isEmpty) return inCategory;
-
     return intersect;
+  }
+
+  // -----------------------------
+  // Boot warmup: run once early to reduce “empty then load”
+  // -----------------------------
+  Future<void> warmup() async {
+    if (_warming) return;
+    _warming = true;
+
+    try {
+      // Best-effort warmup: small, fast call
+      await _api.getFeedItems(page: 1, pageSize: 5);
+    } catch (_) {
+      // ignore warmup failures
+    } finally {
+      _warming = false;
+    }
   }
 
   // -----------------------------
@@ -91,10 +96,23 @@ class NewsProvider extends ChangeNotifier {
     if (_inited) return;
     _inited = true;
 
-    scrollController.addListener(_onScroll);
+    // ✅ Start loading immediately (so screens show skeleton instead of “no items”)
+    if (!isLoading && items.isEmpty) {
+      isLoading = true;
+      notifyListeners();
+    }
 
-    await _loadSources();
-    await refresh(silent: false);
+    // ✅ Parallel: sources + first fetch
+    await Future.wait([
+      _loadSources(),
+      _fetchFirstFast(),
+    ]);
+
+    // ✅ Background: load larger list silently (don’t block UI)
+    unawaited(_fetchBiggerSilent());
+
+    isLoading = false;
+    notifyListeners();
   }
 
   // -----------------------------
@@ -102,15 +120,12 @@ class NewsProvider extends ChangeNotifier {
   // -----------------------------
   Future<void> _loadSources() async {
     try {
-      // Use feed-items/sources endpoint if you have it (best for UI chips),
-      // otherwise fall back to news-sources.
       try {
         sources = await _api.getFeedSourcesForUi();
       } catch (_) {
         sources = await _api.getNewsSources();
       }
 
-      // Keep stable ordering (trustLevel desc then name)
       sources.sort((a, b) {
         final t = b.trustLevel.compareTo(a.trustLevel);
         if (t != 0) return t;
@@ -119,7 +134,6 @@ class NewsProvider extends ChangeNotifier {
 
       notifyListeners();
     } catch (e) {
-      // Don’t block screen if sources fail; still allow news loading
       error = e.toString();
       notifyListeners();
     }
@@ -134,7 +148,6 @@ class NewsProvider extends ChangeNotifier {
 
     _selectedCategory = c;
 
-    // Remove any selected source IDs that do not exist in this category
     final catIds = filteredSources.map((s) => s.id).toSet();
     selectedSourceIds.removeWhere((id) => !catIds.contains(id));
 
@@ -174,6 +187,76 @@ class NewsProvider extends ChangeNotifier {
     await fetchNews(force: true, silent: silent);
   }
 
+  Future<void> _fetchFirstFast() async {
+    try {
+      final ids = effectiveSourceIds.toList();
+
+      final list = await _api.getFeedItems(
+        page: 1,
+        pageSize: 12, // ✅ fast first paint
+        sourceId: (ids.length == 1) ? ids.first : null,
+        category: isAllCategories ? null : _selectedCategory,
+      );
+
+      final filtered = (ids.isEmpty)
+          ? list
+          : list.where((it) => ids.contains(it.sourceId)).toList();
+
+      filtered.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+
+      items = _dedupeByUrlKeepOrder(filtered);
+
+      sliderItems = items.take(5).toList();
+
+      final withImg = items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
+      discoverItems = (withImg.isNotEmpty ? withImg : items).take(18).toList();
+
+      refreshTick += 1;
+      error = null;
+      notifyListeners();
+    } catch (e) {
+      // Keep skeleton visible if first fetch fails
+      error = e.toString();
+      notifyListeners();
+    }
+  }
+
+  Future<void> _fetchBiggerSilent() async {
+    try {
+      final ids = effectiveSourceIds.toList();
+
+      final list = await _api.getFeedItems(
+        page: 1,
+        pageSize: 60, // ✅ full list after first paint
+        sourceId: (ids.length == 1) ? ids.first : null,
+        category: isAllCategories ? null : _selectedCategory,
+      );
+
+      final filtered = (ids.isEmpty)
+          ? list
+          : list.where((it) => ids.contains(it.sourceId)).toList();
+
+      filtered.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+
+      final merged = _dedupeByUrlKeepOrder(filtered);
+
+      // Only update if it’s actually better/newer
+      if (merged.isNotEmpty && merged.length >= items.length) {
+        items = merged;
+        sliderItems = items.take(5).toList();
+
+        final withImg = items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
+        discoverItems = (withImg.isNotEmpty ? withImg : items).take(18).toList();
+
+        refreshTick += 1;
+        error = null;
+        notifyListeners();
+      }
+    } catch (_) {
+      // ignore background failures
+    }
+  }
+
   Future<void> fetchNews({bool force = false, required bool silent}) async {
     if (isLoading || isSilentRefreshing) return;
 
@@ -190,34 +273,26 @@ class NewsProvider extends ChangeNotifier {
     try {
       final ids = effectiveSourceIds.toList();
 
-      // ✅ Your ApiService supports category + sourceId
-      // We fetch ONE page big enough for UI (adjust pageSize if needed)
       final list = await _api.getFeedItems(
         page: 1,
         pageSize: 60,
-        sourceId: (ids.length == 1) ? ids.first : null, // only if single-source
+        sourceId: (ids.length == 1) ? ids.first : null,
         category: isAllCategories ? null : _selectedCategory,
       );
 
-      // If multi-source is selected, filter client-side too
-      // (since API supports only one sourceId param here)
       final filtered = (ids.isEmpty)
           ? list
           : list.where((it) => ids.contains(it.sourceId)).toList();
 
-      // ✅ ALWAYS newest-first
       filtered.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
 
       items = _dedupeByUrlKeepOrder(filtered);
 
-      // ✅ Slideshow must be latest -> next latest...
       sliderItems = items.take(5).toList();
 
-      // Discover: prefer items with images, still newest-first
       final withImg = items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
       discoverItems = (withImg.isNotEmpty ? withImg : items).take(18).toList();
 
-      // ✅ tick increments after refresh completes
       refreshTick += 1;
 
       isLoading = false;
@@ -254,18 +329,8 @@ class NewsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _onScroll() {
-    if (!scrollController.hasClients) return;
-    final pos = scrollController.position;
-    if (pos.pixels >= pos.maxScrollExtent - 300) {
-      fetchMore();
-    }
-  }
-
   @override
   void dispose() {
-    scrollController.removeListener(_onScroll);
-    scrollController.dispose();
     super.dispose();
   }
 }

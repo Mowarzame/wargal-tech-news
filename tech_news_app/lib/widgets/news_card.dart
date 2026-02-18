@@ -19,6 +19,9 @@ class NewsCard extends StatelessWidget {
     final theme = Theme.of(context);
     final publishedLocal = item.publishedAt.toLocal();
 
+    final img = (item.imageUrl ?? '').trim();
+    final hasImg = img.isNotEmpty;
+
     return Card(
       elevation: 0,
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -31,24 +34,16 @@ class NewsCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if ((item.imageUrl ?? '').trim().isNotEmpty) ...[
+              if (hasImg) ...[
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: CachedNetworkImage(
-                    imageUrl: item.imageUrl!.trim(),
+                    imageUrl: img,
                     height: 180,
                     width: double.infinity,
                     fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(
-                      height: 180,
-                      color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.6),
-                    ),
-                    errorWidget: (_, __, ___) => Container(
-                      height: 180,
-                      color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.6),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.broken_image_outlined),
-                    ),
+                    placeholder: (_, __) => _imgPlaceholder(theme),
+                    errorWidget: (_, __, ___) => _imgPlaceholder(theme),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -100,6 +95,16 @@ class NewsCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _imgPlaceholder(ThemeData theme) {
+    return Container(
+      height: 180,
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.6),
+      alignment: Alignment.center,
+      child: const Icon(Icons.image_outlined, color: Colors.grey),
     );
   }
 

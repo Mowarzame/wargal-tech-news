@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   AppBar,
@@ -35,7 +36,7 @@ import { NewsSource } from "@/app/types/news";
 import { useAuth } from "@/app/providers/AuthProvider";
 import GoogleSignInButton from "@/app/components/auth/GoogleSignInButton";
 
-const REFRESH_MS = 2 * 60 * 1000;
+const REFRESH_MS = 60 * 1000;
 
 function clean(s?: string | null) {
   return (s ?? "").trim();
@@ -124,38 +125,32 @@ export default function Navbar() {
     router.push("/");
   };
 
-  const onHomeLogoClick = () => {
-    // 1) Always scroll to top immediately (YouTube/Facebook feel)
-    window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-
-    // 2) If already on home: force a refresh (re-fetch SSR data)
-    if (pathname === "/") {
-      router.refresh();
-      return;
-    }
-
-    // 3) If not on home: go home, then refresh once the route updates
-    router.push("/");
-    // Small delay ensures route is mounted before refresh
-    setTimeout(() => router.refresh(), 50);
-  };
-
   return (
     <AppBar position="sticky" elevation={0}>
       <Toolbar sx={{ minHeight: 64, gap: 2 }}>
-        {/* Left: Logo */}
+        {/* Left: Logo (reliable navigation) */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
           <Box
-            component="img"
-            src="/images/logo/correctLogo2.png"
-            alt="Wargal"
-            sx={{ width: 70, height: 70, borderRadius: 1 }}
-            onClick={onHomeLogoClick}
-
-          />
+            component={Link}
+            href="/"
+            prefetch
+            onClick={() => {
+              window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+            }}
+            sx={{ display: "inline-flex", alignItems: "center" }}
+            aria-label="Go to home"
+          >
+            <Box
+              component="img"
+              src="/images/logo/correctLogo2.png"
+              alt="Wargal"
+              sx={{ width: 70, height: 70, borderRadius: 1, cursor: "pointer" }}
+              draggable={false}
+            />
+          </Box>
         </Box>
 
-        {/* Center: marquee (show on mobile too, like your screenshot) */}
+        {/* Center: marquee */}
         <Box sx={{ flex: 1, display: "flex", justifyContent: "center", minWidth: 0 }}>
           <SourcesMarquee sources={sources} />
         </Box>
@@ -288,7 +283,6 @@ export default function Navbar() {
             <ListItemText primary="News" primaryTypographyProps={{ fontWeight: 900 }} />
           </ListItemButton>
 
-          {/* Community requires auth, but allow navigation anyway (page will enforce auth) */}
           <ListItemButton onClick={() => doNav("/community")}>
             <ListItemText primary="Community" primaryTypographyProps={{ fontWeight: 900 }} />
           </ListItemButton>
@@ -334,7 +328,7 @@ export default function Navbar() {
         <DialogTitle sx={{ fontWeight: 950 }}>Sign in with Google</DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
           <Typography variant="caption" color="text.secondary">
-          Wargal News the first somali news aggregator
+            Wargal News the first somali news aggregator
           </Typography>
 
           <Box sx={{ mt: 2, display: "flex", justifyContent: "center" }}>
