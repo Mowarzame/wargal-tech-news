@@ -294,7 +294,8 @@ class BreakingNewsScreenState extends State<BreakingNewsScreen>
     final moreList = latest;
 
     // ✅ Skeleton mode: loading AND no current slide yet
-    final showSkeleton = p.isLoading && current == null;
+final showSkeleton = p.isLoading && p.items.isEmpty && current == null;
+
 
     return Scaffold(
       backgroundColor: Colors.grey.shade100,

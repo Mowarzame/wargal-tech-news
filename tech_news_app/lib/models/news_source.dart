@@ -13,7 +13,7 @@ class NewsSource {
   final int trustLevel;
   final bool isActive;
 
-  // ✅ NEW (from your response)
+  // NEW
   final DateTime? lastFetchedAt;
   final DateTime? nextFetchAt;
   final int fetchIntervalMinutes;
@@ -45,33 +45,74 @@ class NewsSource {
     DateTime? parseDt(dynamic v) {
       if (v == null) return null;
       try {
+        // store/receive as ISO; keep as local for UI if you want
         return DateTime.parse(v.toString()).toLocal();
       } catch (_) {
         return null;
       }
     }
 
+    int parseInt(dynamic v, {int fallback = 0}) {
+      if (v == null) return fallback;
+      if (v is num) return v.toInt();
+      return int.tryParse(v.toString()) ?? fallback;
+    }
+
+    bool parseBool(dynamic v, {bool fallback = true}) {
+      if (v == null) return fallback;
+      if (v is bool) return v;
+      final s = v.toString().toLowerCase().trim();
+      if (s == "true" || s == "1") return true;
+      if (s == "false" || s == "0") return false;
+      return fallback;
+    }
+
     return NewsSource(
       id: (json['id'] ?? '').toString(),
       name: (json['name'] ?? '').toString(),
-      type: json['type'] ?? 0,
-      websiteUrl: json['websiteUrl'],
-      rssUrl: json['rssUrl'],
-      youTubeChannelId: json['youTubeChannelId'],
-      youTubeUploadsPlaylistId: json['youTubeUploadsPlaylistId'],
-      iconUrl: json['iconUrl'],
-      category: json['category'],
-      language: json['language'],
-      country: json['country'],
-      trustLevel: json['trustLevel'] ?? 0,
-      isActive: json['isActive'] ?? true,
+      type: parseInt(json['type']),
+      websiteUrl: json['websiteUrl']?.toString(),
+      rssUrl: json['rssUrl']?.toString(),
+      youTubeChannelId: json['youTubeChannelId']?.toString(),
+      youTubeUploadsPlaylistId: json['youTubeUploadsPlaylistId']?.toString(),
+      iconUrl: json['iconUrl']?.toString(),
+      category: json['category']?.toString(),
+      language: json['language']?.toString(),
+      country: json['country']?.toString(),
+      trustLevel: parseInt(json['trustLevel']),
+      isActive: parseBool(json['isActive'], fallback: true),
 
-      // ✅ NEW
       lastFetchedAt: parseDt(json['lastFetchedAt']),
       nextFetchAt: parseDt(json['nextFetchAt']),
-      fetchIntervalMinutes: json['fetchIntervalMinutes'] ?? 0,
-      errorCount: json['errorCount'] ?? 0,
-      lastError: json['lastError'],
+      fetchIntervalMinutes: parseInt(json['fetchIntervalMinutes']),
+      errorCount: parseInt(json['errorCount']),
+      lastError: json['lastError']?.toString(),
     );
+  }
+
+  // ✅ REQUIRED FOR CACHE
+  Map<String, dynamic> toJson() {
+    String? dt(DateTime? v) => v == null ? null : v.toUtc().toIso8601String();
+
+    return <String, dynamic>{
+      "id": id,
+      "name": name,
+      "type": type,
+      "websiteUrl": websiteUrl,
+      "rssUrl": rssUrl,
+      "youTubeChannelId": youTubeChannelId,
+      "youTubeUploadsPlaylistId": youTubeUploadsPlaylistId,
+      "iconUrl": iconUrl,
+      "category": category,
+      "language": language,
+      "country": country,
+      "trustLevel": trustLevel,
+      "isActive": isActive,
+      "lastFetchedAt": dt(lastFetchedAt),
+      "nextFetchAt": dt(nextFetchAt),
+      "fetchIntervalMinutes": fetchIntervalMinutes,
+      "errorCount": errorCount,
+      "lastError": lastError,
+    };
   }
 }

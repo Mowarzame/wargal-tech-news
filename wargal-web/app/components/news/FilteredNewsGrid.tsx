@@ -1,5 +1,7 @@
 // ==============================
 // File: wargal-web/app/components/news/FilteredNewsGrid.tsx
+// ✅ Fix: YouTube items render using embed URL (watch pages refuse to connect)
+// ✅ Keep original modal structure + restore related videos section
 // ✅ Safeguard: respects selectedCategory strictly (HomeShell passes "News")
 // ==============================
 "use client";
@@ -70,6 +72,9 @@ function extractYoutubeId(url: string): string | null {
 
       const shortsIdx = parts.indexOf("shorts");
       if (shortsIdx >= 0 && parts[shortsIdx + 1]) return parts[shortsIdx + 1];
+
+      const liveIdx = parts.indexOf("live");
+      if (liveIdx >= 0 && parts[liveIdx + 1]) return parts[liveIdx + 1];
     }
 
     return null;
@@ -173,9 +178,12 @@ export default function FilteredNewsGrid({
 
   const list = useMemo(() => (initialItems ?? []).filter(Boolean), [initialItems]);
 
+  // original item URL (watch/article)
   const modalUrl = useMemo(() => safeUrl(openItem?.url), [openItem]);
+
   const isVideo = openItem?.kind === 2;
 
+  // YouTube embed for kind=2
   const ytId = useMemo(() => {
     const u = safeUrl(openItem?.url);
     if (!u) return null;
@@ -184,8 +192,15 @@ export default function FilteredNewsGrid({
 
   const youtubeEmbedSrc = useMemo(() => {
     if (!ytId) return null;
-    return `https://www.youtube.com/embed/${ytId}?autoplay=1`;
+    return `https://www.youtube.com/embed/${ytId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`;
   }, [ytId]);
+
+  // The iframe src we actually render
+  const iframeSrc = useMemo(() => {
+    if (!modalUrl) return "";
+    if (isVideo && youtubeEmbedSrc) return youtubeEmbedSrc;
+    return modalUrl;
+  }, [modalUrl, isVideo, youtubeEmbedSrc]);
 
   const displayItems = useMemo(() => {
     const ids = (selectedSourceIds ?? []).map(String).filter(Boolean);
@@ -211,6 +226,7 @@ export default function FilteredNewsGrid({
 
   useEffect(() => {
     setVisibleCount(pageSize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageSize, selectedCategory, selectedSourceIds.join("|"), displayItems.length]);
 
   const canLoadMore = displayItems.length > visibleCount;
@@ -269,6 +285,79 @@ export default function FilteredNewsGrid({
 
     return out;
   }, [openItem, displayItems]);
+
+  const RelatedList = (
+    <Box sx={{ p: 2 }}>
+      <Typography fontWeight={950} sx={{ mb: 1 }}>
+        Related videos
+      </Typography>
+
+      {relatedVideos.length ? (
+        <Stack spacing={1.25}>
+          {relatedVideos.map((rv) => {
+            const thumb = pickThumb(rv);
+            const title = clean(rv?.title) || "(Untitled)";
+            const source = clean(rv?.sourceName) || "Source";
+            return (
+              <Box
+                key={clean(rv?.id) || clean(rv?.url)}
+                onClick={() => setOpenItem(rv)}
+                sx={{
+                  cursor: "pointer",
+                  display: "flex",
+                  gap: 1.25,
+                  p: 1,
+                  borderRadius: 2,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  bgcolor: "common.white",
+                  "&:hover": { boxShadow: 1 },
+                }}
+              >
+                <Box
+                  sx={{
+                    width: 92,
+                    height: 56,
+                    borderRadius: 1.5,
+                    backgroundImage: `url(${thumb})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    bgcolor: "grey.100",
+                    flex: "0 0 auto",
+                  }}
+                />
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography fontWeight={900} sx={{ fontSize: 13, lineHeight: 1.2 }} noWrap>
+                    {title}
+                  </Typography>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.6 }}>
+                    <Avatar src={rv?.sourceIconUrl ?? undefined} sx={{ width: 18, height: 18 }}>
+                      {(source[0] ?? "S").toUpperCase()}
+                    </Avatar>
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1 }}>
+                      {source}
+                    </Typography>
+                  </Stack>
+
+                  {!!clean(rv?.publishedAt) && (
+                    <TimeAgo
+                      iso={rv?.publishedAt}
+                      variant="caption"
+                      sx={{ color: "text.secondary", fontWeight: 900, mt: 0.5, display: "block" }}
+                    />
+                  )}
+                </Box>
+              </Box>
+            );
+          })}
+        </Stack>
+      ) : (
+        <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 800 }}>
+          No related videos found.
+        </Typography>
+      )}
+    </Box>
+  );
 
   return (
     <>
@@ -353,7 +442,7 @@ export default function FilteredNewsGrid({
         ) : null}
       </Box>
 
-      {/* Modal includes TimeAgo */}
+      {/* Modal (original structure + related videos) */}
       <Dialog
         open={!!openItem}
         onClose={closeModal}
@@ -411,7 +500,7 @@ export default function FilteredNewsGrid({
             height: { xs: "auto", sm: "calc(100% - 96px)" },
           }}
         >
-          {!modalUrl ? (
+          {!iframeSrc ? (
             <Box sx={{ p: 3 }}>
               <Typography fontWeight={950} fontSize={16}>
                 This item can’t be opened in the modal
@@ -429,42 +518,72 @@ export default function FilteredNewsGrid({
                 flexDirection: "column",
               }}
             >
+          
+              {/* main content area + related videos */}
               <Box
                 sx={{
-                  px: 2,
-                  py: 1,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
                   display: "flex",
-                  alignItems: "center",
-                  gap: 1,
-                  bgcolor: "common.white",
-                  flexWrap: "wrap",
+                  flex: 1,
+                  minHeight: 0,
+                  flexDirection: { xs: "column", md: "row" },
                 }}
               >
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>
-                  If the page is blank, the site blocks embedding. Use{" "}
-                  <span style={{ fontWeight: 950 }}>Open in new tab</span>.
-                </Typography>
+                {/* Left: iframe */}
+                <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, bgcolor: "common.white" }}>
+                  <Box
+                    component="iframe"
+                    src={iframeSrc}
+                    title={isVideo ? "YouTube video" : "Article"}
+                    allow={
+                      isVideo
+                        ? "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        : undefined
+                    }
+                    allowFullScreen={isVideo ? true : undefined}
+                    referrerPolicy="strict-origin-when-cross-origin"
+                    sx={{ width: "100%", height: "100%", border: 0, bgcolor: "common.white" }}
+                  />
+                </Box>
 
-                <Box sx={{ flex: 1 }} />
-
-                <Button
-                  onClick={() => window.open(modalUrl, "_blank", "noopener,noreferrer")}
-                  variant="contained"
-                  startIcon={<OpenInNewIcon />}
-                  sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+                {/* Right: related videos (desktop) */}
+                <Box
+                  sx={{
+                    display: { xs: "none", md: "block" },
+                    width: 360,
+                    borderLeft: "1px solid",
+                    borderColor: "divider",
+                    bgcolor: "grey.50",
+                    overflow: "auto",
+                  }}
                 >
-                  Open in new tab
-                </Button>
-              </Box>
+                  {RelatedList}
+                </Box>
 
-              <Box
-                component="iframe"
-                src={modalUrl}
-                title="Article"
-                sx={{ width: "100%", height: "100%", border: 0, bgcolor: "common.white" }}
-              />
+                {/* Mobile related videos (collapsible) */}
+                <Box sx={{ display: { xs: "block", md: "none" } }}>
+                  <Divider />
+                  <Box sx={{ px: 2, py: 1.25, bgcolor: "grey.50" }}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      onClick={() => setMobileRelatedOpen((v) => !v)}
+                      endIcon={mobileRelatedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                      sx={{
+                        textTransform: "none",
+                        fontWeight: 900,
+                        borderRadius: 999,
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      Related videos
+                    </Button>
+
+                    <Collapse in={mobileRelatedOpen} timeout={180}>
+                      <Box sx={{ mt: 1.25 }}>{RelatedList}</Box>
+                    </Collapse>
+                  </Box>
+                </Box>
+              </Box>
             </Box>
           )}
 

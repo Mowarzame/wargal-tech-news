@@ -16,21 +16,17 @@ class NewsScreen extends StatefulWidget {
   NewsScreenState createState() => NewsScreenState();
 }
 
-/// ✅ Public State so AppShell can use GlobalKey<NewsScreenState>
 class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
   bool _inited = false;
 
   Timer? _autoRefreshTimer;
 
-  // ✅ Private controller (prevents multiple-attachment issues)
   final ScrollController _scrollController = ScrollController();
-
   final PageController _pageController = PageController(viewportFraction: 0.92);
 
   int _lastTick = -1;
   int _lastSliderSig = 0;
 
-  // ✅ AppShell can call this
   void scrollToTop({bool animated = true}) {
     if (!_scrollController.hasClients) return;
     if (!animated) {
@@ -44,20 +40,14 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
     );
   }
 
-  // ✅ AppShell can call this
   void onTabActivated({
     required bool scrollTop,
     required bool forceRefresh,
     required bool resetSlider,
   }) {
-    if (scrollTop) {
-      scrollToTop(animated: true);
-    }
-    if (resetSlider) {
-      _resetSliderToLatest();
-    }
+    if (scrollTop) scrollToTop(animated: true);
+    if (resetSlider) _resetSliderToLatest();
     if (forceRefresh) {
-      // ✅ "retap" refresh (manual feel)
       context.read<NewsProvider>().refresh(silent: false);
     }
   }
@@ -96,7 +86,6 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
-    // ✅ 30 seconds background refresh
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       if (!mounted) return;
       await context.read<NewsProvider>().refresh(silent: true);
@@ -166,14 +155,9 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final p = context.watch<NewsProvider>();
 
-    final items = p.items.toList()
-      ..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
-
-    final slider = p.sliderItems.toList()
-      ..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
-
-    final discover = p.discoverItems.toList()
-      ..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+    final items = p.items.toList()..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+    final slider = p.sliderItems.toList()..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+    final discover = p.discoverItems.toList()..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
 
     if (_lastTick != p.refreshTick) {
       _lastTick = p.refreshTick;
@@ -186,7 +170,7 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
       _resetSliderToLatest();
     }
 
-    // ✅ Highlights grid: fixed latest items (not tied to slide position)
+    // Highlights fixed latest items
     final seenGrid = <String>{};
     final grid = <NewsItem>[];
 
@@ -209,7 +193,7 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
       }
     }
 
-    final moreList = items;
+    final showSkeleton = p.isLoading && items.isEmpty;
 
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
@@ -227,7 +211,54 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
               ),
             ),
 
-            if (slider.isNotEmpty)
+            if (showSkeleton)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+                  child: const _SkeletonHeroSmall(),
+                ),
+              ),
+
+            if (showSkeleton)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(12, 2, 12, 8),
+                  child: Text(
+                    "Highlights",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+
+            if (showSkeleton)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: const _SkeletonGrid(),
+                ),
+              ),
+
+            if (showSkeleton)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(12, 14, 12, 8),
+                  child: Text(
+                    "More news",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+
+            if (showSkeleton)
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) => const _SkeletonListItem(),
+                  childCount: 8,
+                ),
+              ),
+
+            // Normal slider
+            if (!showSkeleton && slider.isNotEmpty)
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 10),
@@ -240,16 +271,7 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            // ✅ Keep this loading indicator (even if it is split-second)
-            if (p.isLoading)
-              const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.only(top: 80),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              ),
-
-            if (!p.isLoading && p.error != null)
+            if (!showSkeleton && p.error != null)
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.only(top: 80),
@@ -257,21 +279,17 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            if (!p.isLoading && p.error == null && items.isEmpty)
+            if (!showSkeleton && p.error == null && items.isEmpty)
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 80),
                   child: Center(
-                    child: Text(
-                      p.isAllCategories
-                          ? "No aggregated news yet"
-                          : "No news for '${p.selectedCategory}' yet",
-                    ),
+                    child: Text("No news yet"),
                   ),
                 ),
               ),
 
-            if (!p.isLoading && p.error == null && grid.isNotEmpty)
+            if (!showSkeleton && p.error == null && grid.isNotEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(12, 14, 12, 8),
@@ -282,7 +300,7 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            if (!p.isLoading && p.error == null && grid.isNotEmpty)
+            if (!showSkeleton && p.error == null && grid.isNotEmpty)
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -290,7 +308,7 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            if (!p.isLoading && p.error == null && moreList.isNotEmpty)
+            if (!showSkeleton && p.error == null && items.isNotEmpty)
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(12, 14, 12, 8),
@@ -301,11 +319,11 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            if (!p.isLoading && p.error == null && moreList.isNotEmpty)
+            if (!showSkeleton && p.error == null && items.isNotEmpty)
               SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, i) {
-                    final item = moreList[i];
+                    final item = items[i];
                     return NewsCard(
                       item: item,
                       onTap: () => _openModal(context, item),
@@ -315,15 +333,7 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
                       ),
                     );
                   },
-                  childCount: moreList.length,
-                ),
-              ),
-
-            if (p.isLoadingMore)
-              const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 18),
-                  child: Center(child: CircularProgressIndicator()),
+                  childCount: items.length,
                 ),
               ),
 
@@ -335,6 +345,145 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
   }
 }
 
+// ------------------------------
+// Skeleton UI (local)
+// ------------------------------
+
+class _SkeletonBlock extends StatelessWidget {
+  final double height;
+  final double? width;
+  final BorderRadius borderRadius;
+
+  const _SkeletonBlock({
+    required this.height,
+    this.width,
+    this.borderRadius = const BorderRadius.all(Radius.circular(14)),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      width: width,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade300,
+        borderRadius: borderRadius,
+      ),
+    );
+  }
+}
+
+class _SkeletonHeroSmall extends StatelessWidget {
+  const _SkeletonHeroSmall();
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        height: 210,
+        color: Colors.grey.shade300,
+        child: Stack(
+          children: [
+            Positioned(
+              left: 14,
+              right: 14,
+              bottom: 14,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  _SkeletonBlock(height: 14, width: 120),
+                  SizedBox(height: 10),
+                  _SkeletonBlock(height: 16),
+                  SizedBox(height: 8),
+                  _SkeletonBlock(height: 16, width: 220),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SkeletonGrid extends StatelessWidget {
+  const _SkeletonGrid();
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      itemCount: 6,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 0.95,
+      ),
+      itemBuilder: (_, __) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            color: Colors.white,
+            child: Column(
+              children: const [
+                _SkeletonBlock(height: 62, borderRadius: BorderRadius.zero),
+                SizedBox(height: 10),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: _SkeletonBlock(height: 12),
+                ),
+                SizedBox(height: 8),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: _SkeletonBlock(height: 12),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SkeletonListItem extends StatelessWidget {
+  const _SkeletonListItem();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Row(
+        children: const [
+          _SkeletonBlock(
+            height: 44,
+            width: 44,
+            borderRadius: BorderRadius.all(Radius.circular(999)),
+          ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SkeletonBlock(height: 12),
+                SizedBox(height: 8),
+                _SkeletonBlock(height: 12, width: 220),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------------------
+// Existing UI helpers (kept)
+// ------------------------------
+
 class _PinnedTopBar extends StatelessWidget {
   final VoidCallback onOpenMenu;
   const _PinnedTopBar({required this.onOpenMenu});
@@ -343,8 +492,7 @@ class _PinnedTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.watch<NewsProvider>();
     final catLabel = p.selectedCategory;
-    final srcLabel =
-        p.isAllSelected ? "All sources" : "${p.selectedSourceIds.length} sources";
+    final srcLabel = p.isAllSelected ? "All sources" : "${p.selectedSourceIds.length} sources";
 
     return Container(
       color: Colors.white,
@@ -423,15 +571,9 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
           children: [
             Row(
               children: [
-                const Text(
-                  "Filters",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-                ),
+                const Text("Filters", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
                 const Spacer(),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close),
-                ),
+                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
               ],
             ),
             const SizedBox(height: 8),
@@ -439,10 +581,7 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
               alignment: Alignment.centerLeft,
               child: Text(
                 "Categories",
-                style: TextStyle(
-                  color: Colors.grey.shade700,
-                  fontWeight: FontWeight.w800,
-                ),
+                style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w800),
               ),
             ),
             const SizedBox(height: 8),
@@ -463,28 +602,20 @@ class _CombinedFiltersSheetState extends State<_CombinedFiltersSheet> {
                     fontWeight: FontWeight.w900,
                     color: isSel ? const Color(0xFF1565C0) : Colors.black87,
                   ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
                 );
               }).toList(),
             ),
             const SizedBox(height: 14),
             TextField(
               controller: _controller,
-              decoration: const InputDecoration(
-                hintText: "Search sources…",
-                prefixIcon: Icon(Icons.search),
-              ),
+              decoration: const InputDecoration(hintText: "Search sources…", prefixIcon: Icon(Icons.search)),
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                TextButton(
-                  onPressed: () => p.clearSources(),
-                  child: const Text("Clear sources"),
-                ),
+                TextButton(onPressed: () => p.clearSources(), child: const Text("Clear sources")),
                 const Spacer(),
                 ElevatedButton(
                   onPressed: () async {
@@ -539,8 +670,7 @@ class _HeaderDelegate extends SliverPersistentHeaderDelegate {
       SizedBox(height: height, child: child);
 
   @override
-  bool shouldRebuild(covariant _HeaderDelegate old) =>
-      old.height != height || old.child != child;
+  bool shouldRebuild(covariant _HeaderDelegate old) => old.height != height || old.child != child;
 }
 
 class _SourceAvatar extends StatelessWidget {
@@ -687,10 +817,7 @@ class _GridSourceAvatar extends StatelessWidget {
       backgroundColor: Colors.white,
       child: CircleAvatar(
         radius: 12,
-        child: Text(
-          letter,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-        ),
+        child: Text(letter, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
       ),
     );
   }

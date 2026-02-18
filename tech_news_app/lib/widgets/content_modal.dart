@@ -27,8 +27,6 @@ class _ContentModalDialogState extends State<_ContentModalDialog> {
   WebViewController? _web;
   YoutubePlayerController? _yt;
 
-  bool _webLoading = true;
-
   bool get _isYouTube {
     final url = widget.item.url.trim();
     final id = YoutubePlayer.convertUrlToId(url);
@@ -43,10 +41,8 @@ class _ContentModalDialogState extends State<_ContentModalDialog> {
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
-
     final w = (diff.inDays / 7).floor();
     if (w < 4) return '${w}w ago';
-
     final mo = (diff.inDays / 30).floor();
     return '${mo}mo ago';
   }
@@ -56,41 +52,27 @@ class _ContentModalDialogState extends State<_ContentModalDialog> {
     super.initState();
 
     final url = widget.item.url.trim();
-
-    // ✅ If YouTube: show ONLY the embedded player (no WebView)
     final ytId = YoutubePlayer.convertUrlToId(url);
+
+    // ✅ YouTube -> player only (no image)
     if (ytId != null && ytId.isNotEmpty) {
       _yt = YoutubePlayerController(
         initialVideoId: ytId,
         flags: const YoutubePlayerFlags(
           autoPlay: true,
           mute: false,
-          disableDragSeek: false,
-          loop: false,
           enableCaption: true,
-          forceHD: false,
         ),
       );
       return;
     }
 
-    // ✅ Non-YouTube: show publisher page in WebView
+    // ✅ Website/RSS -> WebView only (no image)
     final parsed = Uri.tryParse(url);
     if (parsed != null) {
       _web = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageStarted: (_) {
-              if (!mounted) return;
-              setState(() => _webLoading = true);
-            },
-            onPageFinished: (_) {
-              if (!mounted) return;
-              setState(() => _webLoading = false);
-            },
-          ),
-        )
+        ..setNavigationDelegate(NavigationDelegate())
         ..loadRequest(parsed);
     }
   }
@@ -110,7 +92,6 @@ class _ContentModalDialogState extends State<_ContentModalDialog> {
         backgroundImage: CachedNetworkImageProvider(url),
       );
     }
-
     final letter = sourceName.isNotEmpty ? sourceName[0].toUpperCase() : "?";
     return CircleAvatar(
       radius: 18,
@@ -123,7 +104,6 @@ class _ContentModalDialogState extends State<_ContentModalDialog> {
   Widget build(BuildContext context) {
     final item = widget.item;
 
-    final img = (item.imageUrl ?? "").trim();
     final icon = (item.sourceIconUrl ?? "").trim();
     final sourceName =
         item.sourceName.trim().isEmpty ? "Source" : item.sourceName.trim();
@@ -138,7 +118,7 @@ class _ContentModalDialogState extends State<_ContentModalDialog> {
         borderRadius: BorderRadius.circular(18),
         child: Column(
           children: [
-            // ✅ Header: source + time ago + title
+            // ✅ Header only (no image anywhere)
             Container(
               color: Colors.white,
               padding: const EdgeInsets.fromLTRB(12, 12, 8, 10),
@@ -176,7 +156,10 @@ class _ContentModalDialogState extends State<_ContentModalDialog> {
                           item.title,
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ],
                     ),
@@ -190,24 +173,12 @@ class _ContentModalDialogState extends State<_ContentModalDialog> {
               ),
             ),
 
-            // ✅ Thumbnail (optional): keep it for non-youtube
-            if (img.isNotEmpty && !isYoutube)
-              AspectRatio(
-                aspectRatio: 16 / 9,
-                child: CachedNetworkImage(
-                  imageUrl: img,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, __, ___) => Container(color: Colors.grey.shade200),
-                ),
-              ),
-
             const Divider(height: 1),
 
-            // ✅ Body: YouTube -> ONLY player. Non-YouTube -> WebView
             Expanded(
               child: isYoutube
                   ? _YoutubeOnlyBody(controller: _yt)
-                  : _WebBody(controller: _web, loading: _webLoading),
+                  : _WebBody(controller: _web),
             ),
           ],
         ),
@@ -233,9 +204,7 @@ class _YoutubeOnlyBody extends StatelessWidget {
         child: YoutubePlayer(
           controller: controller!,
           showVideoProgressIndicator: true,
-          onReady: () {
-            controller!.play();
-          },
+          onReady: () => controller!.play(),
         ),
       ),
     );
@@ -244,8 +213,7 @@ class _YoutubeOnlyBody extends StatelessWidget {
 
 class _WebBody extends StatelessWidget {
   final WebViewController? controller;
-  final bool loading;
-  const _WebBody({required this.controller, required this.loading});
+  const _WebBody({required this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -253,25 +221,7 @@ class _WebBody extends StatelessWidget {
       return const Center(child: Text("Unable to open this link."));
     }
 
-    return Stack(
-      children: [
-        WebViewWidget(controller: controller!),
-        if (loading)
-          Positioned.fill(
-            child: IgnorePointer(
-              ignoring: true,
-              child: Container(
-                color: Colors.white.withAlpha(160),
-                alignment: Alignment.center,
-                child: const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2.2),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
+    // ✅ No spinner overlay
+    return WebViewWidget(controller: controller!);
   }
 }

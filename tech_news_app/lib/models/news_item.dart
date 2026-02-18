@@ -44,7 +44,6 @@ class NewsItem {
         ? kindVal.toInt()
         : int.tryParse(kindVal?.toString() ?? '') ?? 0;
 
-    // 🔍 VERY IMPORTANT LOGS
     if (kDebugMode) {
       debugPrint(
         '''
@@ -64,7 +63,7 @@ Diff (min)  : ${DateTime.now().difference(published.toLocal()).inMinutes}
       id: (json['id'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
       summary: json['summary']?.toString(),
-      url: (json['linkUrl'] ?? '').toString(),
+      url: (json['linkUrl'] ?? json['url'] ?? '').toString(),
       imageUrl: json['imageUrl']?.toString(),
       youtubeVideoId: json['youTubeVideoId']?.toString(),
       embedUrl: json['embedUrl']?.toString(),
@@ -79,32 +78,41 @@ Diff (min)  : ${DateTime.now().difference(published.toLocal()).inMinutes}
   /// Always use this in UI
   DateTime get publishedLocal => publishedAt.toLocal();
 
-static DateTime _parseApiDateTimeUtc(dynamic raw) {
-  if (raw == null) {
-    return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-  }
-
-  final s = raw.toString().trim();
-  if (s.isEmpty) {
-    return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-  }
-
-  final hasTz =
-      s.endsWith('Z') || RegExp(r'[\+\-]\d{2}:\d{2}$').hasMatch(s);
-
-  try {
-    if (hasTz) {
-      // ✅ Correct instant already (Z or offset)
-      return DateTime.parse(s).toUtc();
+  static DateTime _parseApiDateTimeUtc(dynamic raw) {
+    if (raw == null) {
+      return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
     }
 
-    // ✅ If server sent NO timezone, treat it as LOCAL time and convert to UTC
-    // This prevents “future by 3 hours” in Somalia (+03)
-    return DateTime.parse(s).toUtc();
+    final s = raw.toString().trim();
+    if (s.isEmpty) {
+      return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    }
 
-  } catch (_) {
-    return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    try {
+      // If it has timezone, parse as instant.
+      // If it doesn't, DateTime.parse treats it as local and we .toUtc().
+      return DateTime.parse(s).toUtc();
+    } catch (_) {
+      return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    }
   }
-}
 
+  // ✅ REQUIRED FOR CACHE
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      "id": id,
+      "title": title,
+      "summary": summary,
+      "url": url,
+      "linkUrl": url, // keep compatibility with your fromJson mapping
+      "imageUrl": imageUrl,
+      "youTubeVideoId": youtubeVideoId,
+      "embedUrl": embedUrl,
+      "kind": kind,
+      "publishedAt": publishedAt.toUtc().toIso8601String(),
+      "sourceId": sourceId,
+      "sourceName": sourceName,
+      "sourceIconUrl": sourceIconUrl,
+    };
+  }
 }

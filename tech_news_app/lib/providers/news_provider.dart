@@ -1,26 +1,26 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../models/news_item.dart';
 import '../models/news_source.dart';
 import '../services/api_service.dart';
+import '../services/news_cache_service.dart';
 
 class NewsProvider extends ChangeNotifier {
   NewsProvider(this._api);
 
   final ApiService _api;
+  final NewsCacheService _cache = NewsCacheService();
 
   bool _inited = false;
   bool _warming = false;
 
+  // ✅ real lock (prevents overlap) — DO NOT block based on isLoading
+  bool _fetching = false;
+
   // UI state
-  bool isLoading = false;
-  bool isLoadingMore = false;
-
-  // ✅ silent refresh state (no spinners)
+  bool isLoading = false; // skeleton only if cache empty
   bool isSilentRefreshing = false;
-
   String? error;
 
   // Data
@@ -29,12 +29,9 @@ class NewsProvider extends ChangeNotifier {
   List<NewsItem> discoverItems = [];
   List<NewsSource> sources = [];
 
-  // ✅ increments every time refresh completes (manual or auto)
   int refreshTick = 0;
 
-  // -----------------------------
   // Categories
-  // -----------------------------
   final List<String> categories = const <String>[
     "All",
     "News",
@@ -49,18 +46,14 @@ class NewsProvider extends ChangeNotifier {
   String get selectedCategory => _selectedCategory;
   bool get isAllCategories => _selectedCategory.toLowerCase() == "all";
 
-  // -----------------------------
-  // Sources selection (multi-select)
-  // -----------------------------
+  // Sources selection
   final Set<String> selectedSourceIds = <String>{};
   bool get isAllSelected => selectedSourceIds.isEmpty;
 
   List<NewsSource> get filteredSources {
     final cat = _selectedCategory.trim().toLowerCase();
     if (cat.isEmpty || cat == "all") return sources;
-    return sources
-        .where((s) => (s.category ?? "").trim().toLowerCase() == cat)
-        .toList();
+    return sources.where((s) => (s.category ?? "").trim().toLowerCase() == cat).toList();
   }
 
   Set<String> get effectiveSourceIds {
@@ -72,76 +65,91 @@ class NewsProvider extends ChangeNotifier {
     return intersect;
   }
 
-  // -----------------------------
-  // Boot warmup: run once early to reduce “empty then load”
-  // -----------------------------
+  // Warmup
   Future<void> warmup() async {
     if (_warming) return;
     _warming = true;
-
     try {
-      // Best-effort warmup: small, fast call
       await _api.getFeedItems(page: 1, pageSize: 5);
     } catch (_) {
-      // ignore warmup failures
+      // ignore
     } finally {
       _warming = false;
     }
   }
 
-  // -----------------------------
-  // Init
-  // -----------------------------
+  // ✅ Init: cache-first paint, then MUST run first fetch (await) so skeleton ends
   Future<void> init() async {
     if (_inited) return;
     _inited = true;
 
-    // ✅ Start loading immediately (so screens show skeleton instead of “no items”)
-    if (!isLoading && items.isEmpty) {
+    // 1) paint from cache immediately
+    await _hydrateCacheFirstPaint();
+
+    // 2) refresh sources in background
+    unawaited(_loadSourcesAndCache());
+
+    // 3) ✅ IMPORTANT: await first fetch so skeleton can end
+    await fetchNews(force: true, silent: items.isNotEmpty);
+  }
+
+  String _currentNewsCacheKey() {
+    final ids = effectiveSourceIds.toList()..sort();
+    final cat = isAllCategories ? "all" : _selectedCategory;
+    return _cache.buildNewsKey(category: cat, effectiveSourceIdsSorted: ids);
+  }
+
+  Future<void> _hydrateCacheFirstPaint() async {
+    try {
+      // sources cache
+      final cachedSources = await _cache.loadSources();
+      if (cachedSources.isNotEmpty) {
+        sources = cachedSources;
+      }
+
+      // news cache
+      final cachedNews = await _cache.loadNews(newsKey: _currentNewsCacheKey());
+      if (cachedNews.isNotEmpty) {
+        cachedNews.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+        items = _dedupeByUrlKeepOrder(cachedNews);
+        _rebuildDerivedLists();
+
+        // ✅ cache exists: no skeleton
+        isLoading = false;
+        error = null;
+        notifyListeners();
+        return;
+      }
+
+      // no cache => show skeleton UNTIL first fetch finishes
+      isLoading = true;
+      notifyListeners();
+    } catch (_) {
       isLoading = true;
       notifyListeners();
     }
-
-    // ✅ Parallel: sources + first fetch
-    await Future.wait([
-      _loadSources(),
-      _fetchFirstFast(),
-    ]);
-
-    // ✅ Background: load larger list silently (don’t block UI)
-    unawaited(_fetchBiggerSilent());
-
-    isLoading = false;
-    notifyListeners();
   }
 
-  // -----------------------------
-  // Sources loader
-  // -----------------------------
-  Future<void> _loadSources() async {
+  Future<void> _loadSourcesAndCache() async {
     try {
-      try {
-        sources = await _api.getFeedSourcesForUi();
-      } catch (_) {
-        sources = await _api.getNewsSources();
-      }
+      final fresh = await _api.getFeedSourcesForUi().catchError((_) => _api.getNewsSources());
 
-      sources.sort((a, b) {
+      fresh.sort((a, b) {
         final t = b.trustLevel.compareTo(a.trustLevel);
         if (t != 0) return t;
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
 
+      sources = fresh;
+      unawaited(_cache.saveSources(sources));
       notifyListeners();
     } catch (e) {
-      error = e.toString();
+      error ??= e.toString();
       notifyListeners();
     }
   }
 
-  // -----------------------------
   // Filters
-  // -----------------------------
   Future<void> setCategory(String category) async {
     final c = category.trim();
     if (c.isEmpty) return;
@@ -151,8 +159,8 @@ class NewsProvider extends ChangeNotifier {
     final catIds = filteredSources.map((s) => s.id).toSet();
     selectedSourceIds.removeWhere((id) => !catIds.contains(id));
 
-    notifyListeners();
-    await refresh(silent: false);
+    await _hydrateCacheFirstPaint();
+    await refresh(silent: items.isNotEmpty);
   }
 
   void toggleSource(String sourceId) {
@@ -167,8 +175,9 @@ class NewsProvider extends ChangeNotifier {
   Future<void> selectOnlySource(String? sourceId) async {
     selectedSourceIds.clear();
     if (sourceId != null) selectedSourceIds.add(sourceId);
-    notifyListeners();
-    await refresh(silent: false);
+
+    await _hydrateCacheFirstPaint();
+    await refresh(silent: items.isNotEmpty);
   }
 
   void clearSources() {
@@ -177,94 +186,27 @@ class NewsProvider extends ChangeNotifier {
   }
 
   Future<void> applySourceSelection() async {
-    await refresh(silent: false);
+    await _hydrateCacheFirstPaint();
+    await refresh(silent: items.isNotEmpty);
   }
 
-  // -----------------------------
   // Fetching
-  // -----------------------------
   Future<void> refresh({required bool silent}) async {
     await fetchNews(force: true, silent: silent);
   }
 
-  Future<void> _fetchFirstFast() async {
-    try {
-      final ids = effectiveSourceIds.toList();
-
-      final list = await _api.getFeedItems(
-        page: 1,
-        pageSize: 12, // ✅ fast first paint
-        sourceId: (ids.length == 1) ? ids.first : null,
-        category: isAllCategories ? null : _selectedCategory,
-      );
-
-      final filtered = (ids.isEmpty)
-          ? list
-          : list.where((it) => ids.contains(it.sourceId)).toList();
-
-      filtered.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
-
-      items = _dedupeByUrlKeepOrder(filtered);
-
-      sliderItems = items.take(5).toList();
-
-      final withImg = items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
-      discoverItems = (withImg.isNotEmpty ? withImg : items).take(18).toList();
-
-      refreshTick += 1;
-      error = null;
-      notifyListeners();
-    } catch (e) {
-      // Keep skeleton visible if first fetch fails
-      error = e.toString();
-      notifyListeners();
-    }
-  }
-
-  Future<void> _fetchBiggerSilent() async {
-    try {
-      final ids = effectiveSourceIds.toList();
-
-      final list = await _api.getFeedItems(
-        page: 1,
-        pageSize: 60, // ✅ full list after first paint
-        sourceId: (ids.length == 1) ? ids.first : null,
-        category: isAllCategories ? null : _selectedCategory,
-      );
-
-      final filtered = (ids.isEmpty)
-          ? list
-          : list.where((it) => ids.contains(it.sourceId)).toList();
-
-      filtered.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
-
-      final merged = _dedupeByUrlKeepOrder(filtered);
-
-      // Only update if it’s actually better/newer
-      if (merged.isNotEmpty && merged.length >= items.length) {
-        items = merged;
-        sliderItems = items.take(5).toList();
-
-        final withImg = items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
-        discoverItems = (withImg.isNotEmpty ? withImg : items).take(18).toList();
-
-        refreshTick += 1;
-        error = null;
-        notifyListeners();
-      }
-    } catch (_) {
-      // ignore background failures
-    }
-  }
-
   Future<void> fetchNews({bool force = false, required bool silent}) async {
-    if (isLoading || isSilentRefreshing) return;
+    if (_fetching) return;
+    _fetching = true;
 
     error = null;
 
+    // ✅ Skeleton ONLY if no items and not silent
     if (!silent) {
-      isLoading = true;
-      notifyListeners();
+      if (items.isEmpty) {
+        isLoading = true;
+        notifyListeners();
+      }
     } else {
       isSilentRefreshing = true;
       notifyListeners();
@@ -286,24 +228,47 @@ class NewsProvider extends ChangeNotifier {
 
       filtered.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
 
-      items = _dedupeByUrlKeepOrder(filtered);
+      final next = _dedupeByUrlKeepOrder(filtered);
 
-      sliderItems = items.take(5).toList();
+      if (!_sameTopUrls(items, next)) {
+        items = next;
+        _rebuildDerivedLists();
+        refreshTick += 1;
 
-      final withImg = items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
-      discoverItems = (withImg.isNotEmpty ? withImg : items).take(18).toList();
-
-      refreshTick += 1;
+        unawaited(_cache.saveNews(newsKey: _currentNewsCacheKey(), items: items));
+      }
 
       isLoading = false;
       isSilentRefreshing = false;
+      error = null;
       notifyListeners();
     } catch (e) {
       isLoading = false;
       isSilentRefreshing = false;
       error = e.toString();
       notifyListeners();
+    } finally {
+      _fetching = false;
     }
+  }
+
+  void _rebuildDerivedLists() {
+    sliderItems = items.take(5).toList();
+
+    final withImg = items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
+    discoverItems = (withImg.isNotEmpty ? withImg : items).take(18).toList();
+  }
+
+  bool _sameTopUrls(List<NewsItem> a, List<NewsItem> b, {int topN = 20}) {
+    if (identical(a, b)) return true;
+    final al = a.length < topN ? a.length : topN;
+    final bl = b.length < topN ? b.length : topN;
+    if (al != bl) return false;
+
+    for (int i = 0; i < al; i++) {
+      if (a[i].url.trim() != b[i].url.trim()) return false;
+    }
+    return true;
   }
 
   List<NewsItem> _dedupeByUrlKeepOrder(List<NewsItem> list) {
@@ -315,22 +280,5 @@ class NewsProvider extends ChangeNotifier {
       if (seen.add(u)) out.add(it);
     }
     return out;
-  }
-
-  // Pagination (optional)
-  Future<void> fetchMore() async {
-    if (isLoadingMore || isLoading || isSilentRefreshing) return;
-    isLoadingMore = true;
-    notifyListeners();
-
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-
-    isLoadingMore = false;
-    notifyListeners();
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
   }
 }
