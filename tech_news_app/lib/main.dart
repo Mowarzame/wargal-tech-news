@@ -1,5 +1,6 @@
 // File: lib/main.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'providers/user_provider.dart';
@@ -7,8 +8,13 @@ import 'providers/news_provider.dart';
 import 'services/api_service.dart';
 import 'screens/role_router.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ✅ CRITICAL: lock portrait BEFORE runApp
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
 
   runApp(
     MultiProvider(
@@ -55,8 +61,6 @@ class TechNewsApp extends StatelessWidget {
   }
 }
 
-/// ✅ Shows RoleRouter immediately, runs warmup in background.
-/// No logo screen, no waiting, no navigation after await.
 class _AppStartup extends StatefulWidget {
   const _AppStartup();
 
@@ -64,7 +68,8 @@ class _AppStartup extends StatefulWidget {
   State<_AppStartup> createState() => _AppStartupState();
 }
 
-class _AppStartupState extends State<_AppStartup> with WidgetsBindingObserver {
+class _AppStartupState extends State<_AppStartup>
+    with WidgetsBindingObserver {
   bool _started = false;
 
   @override
@@ -102,7 +107,6 @@ class _AppStartupState extends State<_AppStartup> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // ✅ Fresh data whenever user re-opens app
     if (state == AppLifecycleState.resumed && mounted) {
       Future.microtask(() {
         if (!mounted) return;

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:tech_news_app/models/session.dart';
+import '../models/session.dart';
 import '../services/auth_service.dart';
 import 'login_screen.dart';
 import 'admin/admin_shell.dart';
@@ -14,18 +14,14 @@ class RoleRouter extends StatefulWidget {
 }
 
 class _RoleRouterState extends State<RoleRouter> {
-  late Future<Session?> _sessionFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _sessionFuture = AuthService().getSession();
-  }
+  final AuthService _auth = AuthService();
 
   @override
   Widget build(BuildContext context) {
+    // ✅ IMPORTANT: do NOT cache the future in initState
+    // so logout/login updates are respected immediately.
     return FutureBuilder<Session?>(
-      future: _sessionFuture,
+      future: _auth.getSession(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -33,11 +29,10 @@ class _RoleRouterState extends State<RoleRouter> {
           );
         }
 
-        if (!snapshot.hasData || snapshot.data == null) {
+        final session = snapshot.data;
+        if (session == null) {
           return const LoginScreen();
         }
-
-        final session = snapshot.data!;
 
         switch (session.normalizedRole) {
           case "admin":
@@ -51,4 +46,3 @@ class _RoleRouterState extends State<RoleRouter> {
     );
   }
 }
-

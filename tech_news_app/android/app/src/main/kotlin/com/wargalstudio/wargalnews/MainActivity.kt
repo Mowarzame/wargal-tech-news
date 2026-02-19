@@ -1,4 +1,4 @@
-package com.example.tech_news_app
+package com.wargalstudio.wargalnews
 
 import io.flutter.embedding.android.FlutterActivity
 

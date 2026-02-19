@@ -14,8 +14,17 @@ class UserProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// ✅ NEW: Set user in memory + persist
+  Future<void> setUser(UserDto? user) async {
+    _user = user;
+    await _auth.saveUser(user);
+    notifyListeners();
+  }
+
   Future<void> clear() async {
     _user = null;
+    // Optional: also clear persisted user
+    await _auth.saveUser(null);
     notifyListeners();
   }
 }

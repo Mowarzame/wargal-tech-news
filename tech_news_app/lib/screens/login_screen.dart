@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../models/session.dart';
 import '../services/auth_service.dart';
-import 'role_router.dart';
+import 'admin/admin_shell.dart';
+import 'editor/editor_shell.dart';
+import 'user/user_shell.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -18,25 +21,48 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
   String? _error;
 
-  // ✅ Your REAL public links (GitHub Pages)
-  static const String _termsUrl = "https://mowarzame.github.io/wargal-repository/terms";
-  static const String _privacyUrl = "https://mowarzame.github.io/wargal-repository/privacy";
+  static const String _termsUrl =
+      "https://mowarzame.github.io/wargal-repository/terms";
+  static const String _privacyUrl =
+      "https://mowarzame.github.io/wargal-repository/privacy";
 
   Future<void> _openExternal(String url) async {
     try {
       final uri = Uri.parse(url);
+      if (!await canLaunchUrl(uri)) return;
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
 
-      // ✅ Avoid throwing on some devices
-      final can = await canLaunchUrl(uri);
-      if (!can) return;
+  Future<void> _goToHomeByRole() async {
+    final Session? session = await _authService.getSession();
 
-      await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-    } catch (_) {
-      // keep UI unchanged (silent fail)
+    if (!mounted) return;
+
+    if (session == null) {
+      // If session still null, stay on login silently.
+      setState(() => _error = "Login failed. Please try again.");
+      return;
     }
+
+    Widget target;
+    switch (session.normalizedRole) {
+      case "admin":
+        target = const AdminShell();
+        break;
+      case "editor":
+        target = const EditorShell();
+        break;
+      default:
+        // ✅ This is your “Breaking News” home experience
+        target = const UserShell();
+        break;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => target),
+      (route) => false,
+    );
   }
 
   Future<void> _loginWithGoogle() async {
@@ -48,20 +74,23 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
+      // ✅ Warm the channel early (helps Android first tap)
+      await _authService.warmUpGoogle();
+
       final user = await _authService.loginWithGoogle();
       if (!mounted) return;
 
-      if (user != null) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const RoleRouter()),
-        );
-      } else {
+      if (user == null) {
+        // Silent-ish UX: don’t show platform exception text
         setState(() => _error = "Login failed. Please try again.");
+        return;
       }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = "Something went wrong. $e");
+
+      // ✅ Guaranteed redirect based on freshly saved token
+      await _goToHomeByRole();
+    } catch (_) {
+      // Keep UX clean
+      if (mounted) setState(() => _error = "Login failed. Please try again.");
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -85,17 +114,14 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo
                   Image.asset(
                     'assets/icon/wargalIconAndLogo.png',
                     width: 220,
                     height: 220,
                     fit: BoxFit.contain,
                   ),
-
                   const SizedBox(height: 18),
 
-                  // Glass card
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
@@ -118,11 +144,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(
-                                  Icons.info_outline,
-                                  color: white70,
-                                  size: 20,
-                                ),
+                                const Icon(Icons.info_outline,
+                                    color: white70, size: 20),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
@@ -140,7 +163,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           const SizedBox(height: 14),
                         ],
 
-                        // Google button only
                         SizedBox(
                           width: double.infinity,
                           height: 52,
@@ -171,7 +193,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                         alignment: Alignment.center,
                                         decoration: BoxDecoration(
                                           color: Colors.white,
-                                          borderRadius: BorderRadius.circular(6),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
                                         ),
                                         child: const Text(
                                           "G",
@@ -197,7 +220,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 12),
 
-                        // ✅ Same placement as before, now clickable
                         RichText(
                           textAlign: TextAlign.center,
                           text: TextSpan(
@@ -208,7 +230,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               fontWeight: FontWeight.w600,
                             ),
                             children: [
-                              const TextSpan(text: "By continuing you agree to our "),
+                              const TextSpan(
+                                  text: "By continuing you agree to our "),
                               TextSpan(
                                 text: "Terms",
                                 style: const TextStyle(
