@@ -77,6 +77,8 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.resumed) {
       _startAutoRefresh();
+      context.read<NewsProvider>().refreshOnResume();
+
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {

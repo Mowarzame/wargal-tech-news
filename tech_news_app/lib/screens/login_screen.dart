@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../services/auth_service.dart';
 import 'role_router.dart';
 
@@ -14,6 +17,27 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _loading = false;
   String? _error;
+
+  // ✅ Your REAL public links (GitHub Pages)
+  static const String _termsUrl = "https://mowarzame.github.io/wargal-repository/terms";
+  static const String _privacyUrl = "https://mowarzame.github.io/wargal-repository/privacy";
+
+  Future<void> _openExternal(String url) async {
+    try {
+      final uri = Uri.parse(url);
+
+      // ✅ Avoid throwing on some devices
+      final can = await canLaunchUrl(uri);
+      if (!can) return;
+
+      await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      // keep UI unchanged (silent fail)
+    }
+  }
 
   Future<void> _loginWithGoogle() async {
     if (_loading) return;
@@ -147,8 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                         alignment: Alignment.center,
                                         decoration: BoxDecoration(
                                           color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(6),
+                                          borderRadius: BorderRadius.circular(6),
                                         ),
                                         child: const Text(
                                           "G",
@@ -174,14 +197,39 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 12),
 
-                        const Text(
-                          "By continuing you agree to our Terms and Privacy Policy.",
+                        // ✅ Same placement as before, now clickable
+                        RichText(
                           textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: white70,
-                            height: 1.35,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
+                          text: TextSpan(
+                            style: const TextStyle(
+                              color: white70,
+                              height: 1.35,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            children: [
+                              const TextSpan(text: "By continuing you agree to our "),
+                              TextSpan(
+                                text: "Terms",
+                                style: const TextStyle(
+                                  decoration: TextDecoration.underline,
+                                  color: white,
+                                ),
+                                recognizer: TapGestureRecognizer()
+                                  ..onTap = () => _openExternal(_termsUrl),
+                              ),
+                              const TextSpan(text: " and "),
+                              TextSpan(
+                                text: "Privacy Policy",
+                                style: const TextStyle(
+                                  decoration: TextDecoration.underline,
+                                  color: white,
+                                ),
+                                recognizer: TapGestureRecognizer()
+                                  ..onTap = () => _openExternal(_privacyUrl),
+                              ),
+                              const TextSpan(text: "."),
+                            ],
                           ),
                         ),
                       ],

@@ -83,7 +83,6 @@ class _AppStartupState extends State<_AppStartup> with WidgetsBindingObserver {
     if (_started) return;
     _started = true;
 
-    // ✅ fire-and-forget (no unawaited)
     Future.microtask(() async {
       if (!mounted) return;
       await context.read<UserProvider>().loadUser();
@@ -91,8 +90,7 @@ class _AppStartupState extends State<_AppStartup> with WidgetsBindingObserver {
 
     Future.microtask(() async {
       if (!mounted) return;
-      await context.read<NewsProvider>().warmup(); // must read cache first inside warmup
-      // optionally start silent refresh inside warmup/provider
+      await context.read<NewsProvider>().warmup();
     });
   }
 
@@ -104,18 +102,17 @@ class _AppStartupState extends State<_AppStartup> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // ✅ On resume after long time, trigger a silent refresh (no skeleton)
+    // ✅ Fresh data whenever user re-opens app
     if (state == AppLifecycleState.resumed && mounted) {
       Future.microtask(() {
         if (!mounted) return;
-        context.read<NewsProvider>().refresh(silent: true);
+        context.read<NewsProvider>().refreshOnResume();
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // ✅ Immediate UI (like Facebook)
     return const RoleRouter();
   }
 }

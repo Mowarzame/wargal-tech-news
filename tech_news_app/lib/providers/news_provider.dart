@@ -15,15 +15,12 @@ class NewsProvider extends ChangeNotifier {
   bool _inited = false;
   bool _warming = false;
 
-  // ✅ real lock (prevents overlap) — DO NOT block based on isLoading
   bool _fetching = false;
 
-  // UI state
-  bool isLoading = false; // skeleton only if cache empty
+  bool isLoading = false;
   bool isSilentRefreshing = false;
   String? error;
 
-  // Data
   List<NewsItem> items = [];
   List<NewsItem> sliderItems = [];
   List<NewsItem> discoverItems = [];
@@ -31,7 +28,6 @@ class NewsProvider extends ChangeNotifier {
 
   int refreshTick = 0;
 
-  // Categories
   final List<String> categories = const <String>[
     "All",
     "News",
@@ -46,14 +42,15 @@ class NewsProvider extends ChangeNotifier {
   String get selectedCategory => _selectedCategory;
   bool get isAllCategories => _selectedCategory.toLowerCase() == "all";
 
-  // Sources selection
   final Set<String> selectedSourceIds = <String>{};
   bool get isAllSelected => selectedSourceIds.isEmpty;
 
   List<NewsSource> get filteredSources {
     final cat = _selectedCategory.trim().toLowerCase();
     if (cat.isEmpty || cat == "all") return sources;
-    return sources.where((s) => (s.category ?? "").trim().toLowerCase() == cat).toList();
+    return sources
+        .where((s) => (s.category ?? "").trim().toLowerCase() == cat)
+        .toList();
   }
 
   Set<String> get effectiveSourceIds {
@@ -65,7 +62,6 @@ class NewsProvider extends ChangeNotifier {
     return intersect;
   }
 
-  // Warmup
   Future<void> warmup() async {
     if (_warming) return;
     _warming = true;
@@ -78,19 +74,20 @@ class NewsProvider extends ChangeNotifier {
     }
   }
 
-  // ✅ Init: cache-first paint, then MUST run first fetch (await) so skeleton ends
   Future<void> init() async {
     if (_inited) return;
     _inited = true;
 
-    // 1) paint from cache immediately
     await _hydrateCacheFirstPaint();
-
-    // 2) refresh sources in background
     unawaited(_loadSourcesAndCache());
 
-    // 3) ✅ IMPORTANT: await first fetch so skeleton can end
     await fetchNews(force: true, silent: items.isNotEmpty);
+  }
+
+  /// ✅ Fresh data whenever user re-opens the app (resume)
+  Future<void> refreshOnResume() async {
+    // Always silent, always forced
+    await fetchNews(force: true, silent: true);
   }
 
   String _currentNewsCacheKey() {
@@ -101,27 +98,23 @@ class NewsProvider extends ChangeNotifier {
 
   Future<void> _hydrateCacheFirstPaint() async {
     try {
-      // sources cache
       final cachedSources = await _cache.loadSources();
       if (cachedSources.isNotEmpty) {
         sources = cachedSources;
       }
 
-      // news cache
       final cachedNews = await _cache.loadNews(newsKey: _currentNewsCacheKey());
       if (cachedNews.isNotEmpty) {
         cachedNews.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
         items = _dedupeByUrlKeepOrder(cachedNews);
         _rebuildDerivedLists();
 
-        // ✅ cache exists: no skeleton
         isLoading = false;
         error = null;
         notifyListeners();
         return;
       }
 
-      // no cache => show skeleton UNTIL first fetch finishes
       isLoading = true;
       notifyListeners();
     } catch (_) {
@@ -132,7 +125,8 @@ class NewsProvider extends ChangeNotifier {
 
   Future<void> _loadSourcesAndCache() async {
     try {
-      final fresh = await _api.getFeedSourcesForUi().catchError((_) => _api.getNewsSources());
+      final fresh =
+          await _api.getFeedSourcesForUi().catchError((_) => _api.getNewsSources());
 
       fresh.sort((a, b) {
         final t = b.trustLevel.compareTo(a.trustLevel);
@@ -149,7 +143,6 @@ class NewsProvider extends ChangeNotifier {
     }
   }
 
-  // Filters
   Future<void> setCategory(String category) async {
     final c = category.trim();
     if (c.isEmpty) return;
@@ -190,7 +183,6 @@ class NewsProvider extends ChangeNotifier {
     await refresh(silent: items.isNotEmpty);
   }
 
-  // Fetching
   Future<void> refresh({required bool silent}) async {
     await fetchNews(force: true, silent: silent);
   }
@@ -201,7 +193,6 @@ class NewsProvider extends ChangeNotifier {
 
     error = null;
 
-    // ✅ Skeleton ONLY if no items and not silent
     if (!silent) {
       if (items.isEmpty) {
         isLoading = true;
@@ -230,12 +221,15 @@ class NewsProvider extends ChangeNotifier {
 
       final next = _dedupeByUrlKeepOrder(filtered);
 
-      if (!_sameTopUrls(items, next)) {
+      // Even on force refresh, we still avoid heavy rebuild if top URLs are same.
+      if (force || !_sameTopUrls(items, next)) {
         items = next;
         _rebuildDerivedLists();
         refreshTick += 1;
 
-        unawaited(_cache.saveNews(newsKey: _currentNewsCacheKey(), items: items));
+        unawaited(
+          _cache.saveNews(newsKey: _currentNewsCacheKey(), items: items),
+        );
       }
 
       isLoading = false;
@@ -255,7 +249,8 @@ class NewsProvider extends ChangeNotifier {
   void _rebuildDerivedLists() {
     sliderItems = items.take(5).toList();
 
-    final withImg = items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
+    final withImg =
+        items.where((x) => (x.imageUrl ?? "").trim().isNotEmpty).toList();
     discoverItems = (withImg.isNotEmpty ? withImg : items).take(18).toList();
   }
 

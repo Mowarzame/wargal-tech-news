@@ -13,7 +13,7 @@ class SessionProvider extends ChangeNotifier {
     loading = true;
     notifyListeners();
     try {
-      me = await _auth.getSavedUser(); // read from local storage
+      me = await _auth.getSavedUser();
     } finally {
       loading = false;
       notifyListeners();
@@ -22,14 +22,16 @@ class SessionProvider extends ChangeNotifier {
 
   Future<void> setMe(UserDto? user) async {
     me = user;
-    await _auth.saveUser(user); // persist
+    await _auth.saveUser(user);
     notifyListeners();
   }
 
+  /// ✅ Instant UX: clear state & notify first, then background logout
   Future<void> logout() async {
-    await _auth.logout();
     me = null;
     notifyListeners();
+    // Fire-and-forget: do not block UI/navigation
+    await _auth.logout();
   }
 
   bool get isLoggedIn => me != null;
