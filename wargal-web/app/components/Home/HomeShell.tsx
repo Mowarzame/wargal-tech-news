@@ -1118,103 +1118,148 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                 </Box>
 
                 {/* small screens related */}
-                <Box
+          {/* small screens related (LIGHT GREY) */}
+<Box
+  sx={{
+    display: { xs: "block", md: "none" },
+    bgcolor: "#f5f7fb", // ✅ light grey
+    borderTop: "1px solid",
+    borderColor: "divider",
+  }}
+>
+  <Box
+    onClick={() => relatedVideos.length && setMobileRelatedOpen((v) => !v)}
+    sx={{
+      px: 2,
+      py: 1.25,
+      display: "flex",
+      alignItems: "center",
+      gap: 1,
+      cursor: relatedVideos.length ? "pointer" : "default",
+      userSelect: "none",
+      color: "text.primary",
+    }}
+  >
+    <Typography fontWeight={950} sx={{ flex: 1 }}>
+      Related videos{relatedVideos.length ? ` (${Math.min(3, relatedVideos.length)})` : ""}
+    </Typography>
+
+    {relatedVideos.length ? (
+      <IconButton
+        size="small"
+        aria-label="Toggle related videos"
+        onClick={(e) => {
+          e.stopPropagation();
+          setMobileRelatedOpen((v) => !v);
+        }}
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          bgcolor: "common.white",
+          "&:hover": { bgcolor: "grey.50" },
+        }}
+      >
+        {mobileRelatedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+      </IconButton>
+    ) : null}
+  </Box>
+
+  <Collapse in={mobileRelatedOpen} timeout={200} unmountOnExit>
+    <Box sx={{ px: 2, pb: 1.5 }}>
+      {relatedVideos.length === 0 ? (
+        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+          No related videos found for this title yet.
+        </Typography>
+      ) : (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          {relatedVideos.slice(0, 3).map((rv, i) => {
+            const title = clean(rv?.title) || "Video";
+            const src = clean(rv?.sourceName) || "Source";
+            const thumb = pickThumb(rv);
+            const openUrl = safeUrl(rv?.url);
+
+            return (
+              <Box
+                key={clean(rv?.id) || clean(rv?.url) || `${i}`}
+                onClick={() => setOpenItem(rv)}
+                sx={{
+                  display: "flex",
+                  gap: 1,
+                  alignItems: "center",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 2,
+                  p: 1,
+                  cursor: "pointer",
+                  bgcolor: "common.white",
+                  transition: "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
+                  "&:hover": { bgcolor: "grey.50", boxShadow: 2, transform: "translateY(-1px)" },
+                  minWidth: 0,
+                }}
+              >
+                <Avatar
+                  src={thumb}
                   sx={{
-                    display: { xs: "block", md: "none" },
-                    bgcolor: "common.white",
-                    borderTop: "1px solid",
+                    width: 34,
+                    height: 34,
+                    flexShrink: 0,
+                    bgcolor: "rgba(0,0,0,0.04)",
+                    border: "1px solid",
                     borderColor: "divider",
                   }}
                 >
-                  <Box
-                    onClick={() => relatedVideos.length && setMobileRelatedOpen((v) => !v)}
-          sx={{
-  px: 2,
-  py: 1.25,
-  display: "flex",
-  alignItems: "center",
-  gap: 1,
-  cursor: relatedVideos.length ? "pointer" : "default",
-  userSelect: "none",
-  bgcolor: "#1565C0",
-  color: "common.white",
-}}
-                  >
-                    <Typography fontWeight={950} sx={{ flex: 1 }}>
-                      Related videos{relatedVideos.length ? ` (${Math.min(3, relatedVideos.length)})` : ""}
+                  {(src[0] ?? "V").toUpperCase()}
+                </Avatar>
+
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography fontWeight={950} fontSize={12} noWrap sx={{ color: "text.primary" }}>
+                    {title}
+                  </Typography>
+
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.25 }}>
+                    <Typography variant="caption" noWrap sx={{ color: "text.secondary" }}>
+                      {src}
                     </Typography>
 
-                    {relatedVideos.length ? (
-                      <IconButton
-                        size="small"
-                        aria-label="Toggle related videos"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMobileRelatedOpen((v) => !v);
-                        }}
-                      >
-                        {mobileRelatedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                      </IconButton>
-                    ) : null}
+                    <Box sx={{ flex: 1 }} />
+
+                    {!!clean(rv?.publishedAt) && (
+                      <TimeAgo
+                        key={`${clean(rv?.id) || clean(rv?.url)}-${nowTick}`}
+                        iso={rv?.publishedAt}
+                        variant="caption"
+                        sx={{ color: "text.secondary", fontWeight: 900 }}
+                      />
+                    )}
                   </Box>
-
-                  <Collapse in={mobileRelatedOpen} timeout={200} unmountOnExit>
-                    <Box sx={{ px: 2, pb: 1.5 }}>
-                      <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-                        {relatedVideos.slice(0, 3).map((rv, i) => {
-                          const title = clean(rv?.title) || "Video";
-                          const src = clean(rv?.sourceName) || "Source";
-                          const thumb = pickThumb(rv);
-
-                          return (
-                            <Box
-                              key={clean(rv?.id) || `${i}`}
-                              onClick={() => setOpenItem(rv)}
-                              sx={{
-                                display: "flex",
-                                gap: 1,
-                                alignItems: "center",
-                                border: "1px solid",
-                                borderColor: "divider",
-                                borderRadius: 2,
-                                p: 0.75,
-                                cursor: "pointer",
-                                "&:hover": { bgcolor: "grey.50" },
-                                minWidth: 0,
-                              }}
-                            >
-                              <Avatar src={thumb} sx={{ width: 30, height: 30 }}>
-                                {(src[0] ?? "V").toUpperCase()}
-                              </Avatar>
-
-                              <Box sx={{ minWidth: 0, flex: 1 }}>
-                                <Typography fontWeight={900} fontSize={12} noWrap>
-                                  {title}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary" noWrap>
-                                  {src}
-                                </Typography>
-                              </Box>
-
-                              <IconButton
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const u = safeUrl(rv?.url);
-                                  if (!u) return;
-                                  window.open(u, "_blank", "noopener,noreferrer");
-                                }}
-                                size="small"
-                                aria-label="Open in new tab"
-                              >
-                                <OpenInNewIcon sx={{ fontSize: 16 }} />
-                              </IconButton>
-                            </Box>
-                          );
-                        })}
-                      </Box>
-                    </Box>
-                  </Collapse>
                 </Box>
+
+                <IconButton
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!openUrl) return;
+                    window.open(openUrl, "_blank", "noopener,noreferrer");
+                  }}
+                  size="small"
+                  aria-label="Open in new tab"
+                  sx={{
+                    flexShrink: 0,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    bgcolor: "common.white",
+                    "&:hover": { bgcolor: "grey.50" },
+                  }}
+                >
+                  <OpenInNewIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Box>
+            );
+          })}
+        </Box>
+      )}
+    </Box>
+  </Collapse>
+</Box>
               </Box>
 
               {/* desktop related */}
