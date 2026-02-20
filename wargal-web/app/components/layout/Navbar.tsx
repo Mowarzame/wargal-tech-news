@@ -53,6 +53,7 @@ export default function Navbar() {
   const [sources, setSources] = React.useState<NewsSource[]>([]);
   const [loginOpen, setLoginOpen] = React.useState(false);
   const [loginError, setLoginError] = React.useState<string | null>(null);
+  const [loginHint, setLoginHint] = React.useState<string | null>(null); // ✅ message shown in dialog
 
   // user menu (desktop)
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
@@ -90,16 +91,20 @@ export default function Navbar() {
 
   const tabValue = React.useMemo(() => {
     if (pathname?.startsWith("/community")) return "/community";
+    if (pathname?.startsWith("/contact")) return "/contact";
     return "/";
   }, [pathname]);
 
-  const go = (path: string) => router.push(path);
-
-  const onTabChange = (_: any, v: string) => go(v);
-
-  const openLogin = () => {
+  const openLogin = (hint?: string | null) => {
     setLoginError(null);
+    setLoginHint(hint ?? null);
     setLoginOpen(true);
+  };
+
+  const closeLogin = () => {
+    setLoginOpen(false);
+    setLoginError(null);
+    setLoginHint(null);
   };
 
   const onOpenMenu = (e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget);
@@ -114,15 +119,44 @@ export default function Navbar() {
   const openDrawer = () => setDrawerOpen(true);
   const closeDrawer = () => setDrawerOpen(false);
 
+  const doLogoutMobile = () => {
+    closeDrawer();
+    logout();
+    router.push("/");
+  };
+
   const doNav = (to: string) => {
     closeDrawer();
     router.push(to);
   };
 
-  const doLogoutMobile = () => {
+  const go = (path: string) => {
+    // ✅ Gate community access behind auth (desktop tabs + logo etc can still navigate)
+    if (path === "/community" && isReady && !isAuthed) {
+      openLogin("Sign-in is required to access the Community page.");
+      return;
+    }
+    router.push(path);
+  };
+
+  const onTabChange = (_: any, v: string) => go(v);
+
+  const goCommunityFromMenu = () => {
+    onCloseMenu();
+    if (isReady && !isAuthed) {
+      openLogin("Sign-in is required to access the Community page.");
+      return;
+    }
+    router.push("/community");
+  };
+
+  const goCommunityFromDrawer = () => {
     closeDrawer();
-    logout();
-    router.push("/");
+    if (isReady && !isAuthed) {
+      openLogin("Sign-in is required to access the Community page.");
+      return;
+    }
+    router.push("/community");
   };
 
   return (
@@ -155,11 +189,12 @@ export default function Navbar() {
           <SourcesMarquee sources={sources} />
         </Box>
 
-        {/* Desktop tabs (md+ only, authed only) */}
+        {/* Desktop tabs (md+ only, always show) */}
         <Box
           sx={{
-            display: { xs: "none", md: isAuthed ? "flex" : "none" },
+            display: { xs: "none", md: "flex" },
             alignItems: "center",
+            minWidth: 0,
           }}
         >
           <Tabs
@@ -174,6 +209,7 @@ export default function Navbar() {
           >
             <Tab label="News" value="/" />
             <Tab label="Community" value="/community" />
+            <Tab label="Contact" value="/contact" />
           </Tabs>
         </Box>
 
@@ -186,7 +222,7 @@ export default function Navbar() {
               {/* Desktop: Sign in button */}
               <Button
                 variant="contained"
-                onClick={openLogin}
+                onClick={() => openLogin(null)}
                 sx={{
                   display: { xs: "none", md: "inline-flex" },
                   textTransform: "none",
@@ -210,7 +246,7 @@ export default function Navbar() {
             <>
               {/* Desktop: user menu */}
               <Box sx={{ display: { xs: "none", md: "flex" }, alignItems: "center", gap: 1 }}>
-                <IconButton onClick={onOpenMenu} sx={{ color: "common.white" }}>
+                <IconButton onClick={onOpenMenu} sx={{ color: "common.white" }} aria-label="Open user menu">
                   {clean(user?.profilePictureUrl) ? (
                     <Avatar src={user?.profilePictureUrl ?? undefined} sx={{ width: 32, height: 32 }} />
                   ) : (
@@ -229,15 +265,28 @@ export default function Navbar() {
                       </Typography>
                     </Box>
                   </MenuItem>
+
+                  <MenuItem onClick={() => go("/")} sx={{ fontWeight: 900 }}>
+                    News
+                  </MenuItem>
+                  <MenuItem onClick={goCommunityFromMenu} sx={{ fontWeight: 900 }}>
+                    Community
+                  </MenuItem>
                   <MenuItem
                     onClick={() => {
                       onCloseMenu();
-                      router.push("/community");
+                      router.push("/contact");
                     }}
+                    sx={{ fontWeight: 900 }}
                   >
-                    Community
+                    Contact
                   </MenuItem>
-                  <MenuItem onClick={doLogout}>Logout</MenuItem>
+
+                  <Divider sx={{ my: 0.5 }} />
+
+                  <MenuItem onClick={doLogout} sx={{ fontWeight: 900 }}>
+                    Logout
+                  </MenuItem>
                 </Menu>
               </Box>
 
@@ -283,8 +332,12 @@ export default function Navbar() {
             <ListItemText primary="News" primaryTypographyProps={{ fontWeight: 900 }} />
           </ListItemButton>
 
-          <ListItemButton onClick={() => doNav("/community")}>
+          <ListItemButton onClick={goCommunityFromDrawer}>
             <ListItemText primary="Community" primaryTypographyProps={{ fontWeight: 900 }} />
+          </ListItemButton>
+
+          <ListItemButton onClick={() => doNav("/contact")}>
+            <ListItemText primary="Contact" primaryTypographyProps={{ fontWeight: 900 }} />
           </ListItemButton>
 
           <Divider />
@@ -293,7 +346,7 @@ export default function Navbar() {
             <ListItemButton
               onClick={() => {
                 closeDrawer();
-                openLogin();
+                openLogin(null);
               }}
             >
               <ListItemText primary="Sign in" primaryTypographyProps={{ fontWeight: 900 }} />
@@ -324,11 +377,11 @@ export default function Navbar() {
       </Drawer>
 
       {/* Google sign-in dialog */}
-      <Dialog open={loginOpen} onClose={() => setLoginOpen(false)} fullWidth maxWidth="xs">
+      <Dialog open={loginOpen} onClose={closeLogin} fullWidth maxWidth="xs">
         <DialogTitle sx={{ fontWeight: 950 }}>Sign in with Google</DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
           <Typography variant="caption" color="text.secondary">
-            Wargal News the first somali news aggregator
+            {loginHint ?? "Wargal News — the first Somali news aggregator."}
           </Typography>
 
           <Box sx={{ mt: 2, display: "flex", justifyContent: "center" }}>
@@ -338,6 +391,7 @@ export default function Navbar() {
                 try {
                   await loginWithGoogleProfile(profile);
                   setLoginOpen(false);
+                  setLoginHint(null);
                   router.push("/community");
                 } catch (e: any) {
                   setLoginError(e?.message ?? "Login failed");
@@ -354,7 +408,7 @@ export default function Navbar() {
         </DialogContent>
 
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setLoginOpen(false)} sx={{ textTransform: "none", fontWeight: 900 }}>
+          <Button onClick={closeLogin} sx={{ textTransform: "none", fontWeight: 900 }}>
             Cancel
           </Button>
         </DialogActions>
