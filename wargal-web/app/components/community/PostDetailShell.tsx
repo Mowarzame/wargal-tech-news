@@ -1,9 +1,3 @@
-// ==============================
-// File: wargal-web/app/components/community/PostDetailShell.tsx
-// ✅ Layout fix: Latest LEFT, Post CENTER, Right spacer
-// ✅ Image fix: show full image (contain) not cropped
-// ✅ Video: embed YouTube at end of post (if videoUrl exists)
-// ==============================
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -20,6 +14,7 @@ import {
   IconButton,
   Stack,
   CircularProgress,
+  Skeleton,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import ThumbUpAltOutlinedIcon from "@mui/icons-material/ThumbUpAltOutlined";
@@ -81,7 +76,6 @@ function API_BASE() {
   return (process.env.NEXT_PUBLIC_API_BASE_URL || "").trim() || "http://localhost:5194";
 }
 
-// Your API wraps responses in { data, message, success }
 async function readJson(res: Response) {
   const json = await res.json().catch(() => null);
   if (!res.ok) {
@@ -111,30 +105,25 @@ function extractYouTubeId(input?: string | null): string | null {
   const s = clean(input);
   if (!s) return null;
 
-  // If user pastes only an id
   if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
 
   try {
     const u = new URL(s);
 
-    // youtu.be/<id>
     if (u.hostname.includes("youtu.be")) {
       const id = u.pathname.split("/").filter(Boolean)[0];
       return id && /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
     }
 
-    // youtube.com/watch?v=<id>
     const v = u.searchParams.get("v");
     if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
 
-    // youtube.com/shorts/<id>
     const parts = u.pathname.split("/").filter(Boolean);
     const shortsIdx = parts.findIndex((p) => p === "shorts");
     if (shortsIdx >= 0 && parts[shortsIdx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[shortsIdx + 1])) {
       return parts[shortsIdx + 1];
     }
 
-    // youtube.com/embed/<id>
     const embedIdx = parts.findIndex((p) => p === "embed");
     if (embedIdx >= 0 && parts[embedIdx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[embedIdx + 1])) {
       return parts[embedIdx + 1];
@@ -149,7 +138,6 @@ function extractYouTubeId(input?: string | null): string | null {
 function youtubeEmbedUrl(videoUrl?: string | null) {
   const id = extractYouTubeId(videoUrl);
   if (!id) return null;
-  // modestbranding & rel=0 for cleaner embed
   return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
 }
 
@@ -250,9 +238,71 @@ function ReactionButton({
   );
 }
 
+function isEditorOrAdmin(role?: string | null) {
+  const r = clean(role).toLowerCase();
+  return r === "admin" || r === "editor";
+}
+
+function PostDetailSkeleton() {
+  return (
+    <Box
+      sx={{
+        bgcolor: "common.white",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 2,
+        overflow: "hidden",
+      }}
+    >
+      <Box sx={{ p: 2 }}>
+        <Skeleton variant="text" width={180} height={28} />
+      </Box>
+      <Divider />
+      <Box sx={{ p: 2 }}>
+        <Stack direction="row" spacing={1.2} alignItems="center">
+          <Skeleton variant="circular" width={40} height={40} />
+          <Box sx={{ flex: 1 }}>
+            <Skeleton variant="text" width="42%" height={22} />
+            <Skeleton variant="text" width="22%" height={18} />
+          </Box>
+          <Skeleton variant="rounded" width={74} height={26} />
+        </Stack>
+
+        <Skeleton variant="text" sx={{ mt: 2 }} width="70%" height={30} />
+        <Skeleton variant="text" width="95%" height={22} />
+        <Skeleton variant="text" width="92%" height={22} />
+        <Skeleton variant="text" width="86%" height={22} />
+
+        <Skeleton variant="rounded" sx={{ mt: 2 }} height={360} />
+
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
+          <Skeleton variant="rounded" width={160} height={34} />
+          <Box sx={{ flex: 1 }} />
+          <Skeleton variant="text" width={110} height={20} />
+        </Stack>
+
+        <Divider sx={{ my: 1.25 }} />
+
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: "wrap" }}>
+          <Skeleton variant="rounded" width={90} height={38} sx={{ borderRadius: 999 }} />
+          <Skeleton variant="rounded" width={100} height={38} sx={{ borderRadius: 999 }} />
+          <Skeleton variant="rounded" width={120} height={38} sx={{ borderRadius: 999 }} />
+        </Stack>
+
+        <Box sx={{ mt: 2 }}>
+          <Skeleton variant="text" width={120} height={22} />
+          <Skeleton variant="rounded" sx={{ mt: 1 }} height={44} />
+          <Skeleton variant="rounded" sx={{ mt: 2 }} height={120} />
+          <Skeleton variant="rounded" sx={{ mt: 1.5 }} height={120} />
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
 export default function PostDetailShell({ postId }: { postId: string }) {
   const qc = useQueryClient();
-  const { isReady, isAuthed } = useAuth();
+  const { isReady, isAuthed, user } = useAuth();
 
   // Latest news (LEFT column)
   const latestQuery = useQuery({
@@ -262,7 +312,15 @@ export default function PostDetailShell({ postId }: { postId: string }) {
       return (items ?? []).slice(0, 5);
     },
     staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
+
+  const onOpenNews = (it: any) => {
+    const url = clean(it?.url);
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
 
   // Post
   const postQuery = useQuery({
@@ -270,6 +328,7 @@ export default function PostDetailShell({ postId }: { postId: string }) {
     queryFn: () => getPost(postId),
     staleTime: 10_000,
     refetchInterval: 20_000,
+    refetchOnWindowFocus: true,
   });
 
   // Comments (backend requires auth)
@@ -279,6 +338,7 @@ export default function PostDetailShell({ postId }: { postId: string }) {
     enabled: isReady && isAuthed,
     staleTime: 5_000,
     refetchInterval: 8_000,
+    refetchOnWindowFocus: true,
   });
 
   // Reaction users list dialog
@@ -343,9 +403,9 @@ export default function PostDetailShell({ postId }: { postId: string }) {
       const temp: CommentDto = {
         id: `temp-${Date.now()}`,
         postId,
-        userId: "me",
-        userName: "You",
-        userPhotoUrl: null,
+        userId: clean(user?.id) || "me",
+        userName: clean(user?.name) || "You",
+        userPhotoUrl: clean(user?.profilePictureUrl) || null,
         content,
         createdAt: new Date().toISOString(),
       };
@@ -438,10 +498,18 @@ export default function PostDetailShell({ postId }: { postId: string }) {
   const latestItems = latestQuery.data ?? [];
   const embed = youtubeEmbedUrl(post?.videoUrl);
 
+  const canDeleteComment = (c: CommentDto) => {
+    if (!canInteract) return false;
+    const me = clean(user?.id);
+    if (me && clean(c.userId) === me) return true;
+    // optional: allow admins/editors to delete
+    if (isEditorOrAdmin(user?.role)) return true;
+    return false;
+  };
+
   return (
     <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }}>
       <Box sx={{ px: { xs: 1.5, md: 2 }, py: 2 }}>
-        {/* Facebook-like container width */}
         <Box sx={{ maxWidth: 1280, mx: "auto" }}>
           <Box
             sx={{
@@ -451,297 +519,308 @@ export default function PostDetailShell({ postId }: { postId: string }) {
               gridTemplateColumns: {
                 xs: "1fr",
                 md: "1fr",
-                lg: "320px minmax(0,1fr) 320px", // LEFT + CENTER + RIGHT spacer
+                lg: "320px minmax(0,1fr) 320px",
               },
             }}
           >
             {/* LEFT (desktop): Latest */}
             <Box sx={{ display: { xs: "none", lg: "block" }, position: "sticky", top: 86 }}>
-              <TopSideBar title="Latest" items={latestItems as any} onOpen={() => {}} />
+              {latestQuery.isLoading ? (
+                <Skeleton variant="rounded" height={560} />
+              ) : (
+                <TopSideBar title="Latest" items={latestItems as any} onOpen={onOpenNews} />
+              )}
             </Box>
 
-            {/* CENTER: Post */}
+            {/* CENTER */}
             <Box sx={{ minWidth: 0 }}>
-              <Box
-                sx={{
-                  bgcolor: "common.white",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 2,
-                  overflow: "hidden",
-                }}
-              >
-                {/* Header */}
-                <Box sx={{ p: 2 }}>
-                  <Typography fontWeight={950} fontSize={18}>
-                    Community Post
-                  </Typography>
-                </Box>
-                <Divider />
-
-                {/* Post */}
-                <Box sx={{ p: 2 }}>
-                  {!post ? (
-                    <Typography color="text.secondary" fontWeight={800}>
-                      {postQuery.isLoading ? "Loading post…" : (postQuery.error as any)?.message || "Failed to load post"}
+              {/* ✅ Important: local skeleton so it also appears on back/forward cached navigations */}
+              {postQuery.isLoading ? (
+                <PostDetailSkeleton />
+              ) : (
+                <Box
+                  sx={{
+                    bgcolor: "common.white",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 2,
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* Header */}
+                  <Box sx={{ p: 2 }}>
+                    <Typography fontWeight={950} fontSize={18}>
+                      Community Post
                     </Typography>
-                  ) : (
-                    <>
-                      <Stack direction="row" spacing={1.2} alignItems="center">
-                        <Avatar src={post.user?.profilePictureUrl ?? undefined}>
-                          {(clean(post.user?.name)?.[0] ?? "U").toUpperCase()}
-                        </Avatar>
+                  </Box>
+                  <Divider />
 
-                        <Box sx={{ minWidth: 0, flex: 1 }}>
-                          <Typography fontWeight={950} noWrap>
-                            {clean(post.user?.name) || "User"}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            <TimeAgo iso={post.createdAt} variant="caption" />
-                          </Typography>
-                        </Box>
-
-                        {!post.isVerified && (
-                          <Box
-                            sx={{
-                              px: 1,
-                              py: 0.3,
-                              borderRadius: 999,
-                              bgcolor: "warning.main",
-                              color: "common.white",
-                              fontSize: 12,
-                              fontWeight: 950,
-                            }}
-                          >
-                            Pending
-                          </Box>
-                        )}
-                      </Stack>
-
-                      <Typography sx={{ mt: 1.25 }} fontWeight={950} fontSize={18}>
-                        {clean(post.title)}
+                  {/* Post */}
+                  <Box sx={{ p: 2 }}>
+                    {!post ? (
+                      <Typography color="text.secondary" fontWeight={800}>
+                        {(postQuery.error as any)?.message || "Failed to load post"}
                       </Typography>
+                    ) : (
+                      <>
+                        <Stack direction="row" spacing={1.2} alignItems="center">
+                          <Avatar src={post.user?.profilePictureUrl ?? undefined}>
+                            {(clean(post.user?.name)?.[0] ?? "U").toUpperCase()}
+                          </Avatar>
 
-                      {!!clean(post.content) && (
-                        <Typography sx={{ mt: 1 }} color="text.secondary" style={{ whiteSpace: "pre-wrap" }}>
-                          {post.content}
+                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                            <Typography fontWeight={950} noWrap>
+                              {clean(post.user?.name) || "User"}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              <TimeAgo iso={post.createdAt} variant="caption" />
+                            </Typography>
+                          </Box>
+
+                          {!post.isVerified && (
+                            <Box
+                              sx={{
+                                px: 1,
+                                py: 0.3,
+                                borderRadius: 999,
+                                bgcolor: "warning.main",
+                                color: "common.white",
+                                fontSize: 12,
+                                fontWeight: 950,
+                              }}
+                            >
+                              Pending
+                            </Box>
+                          )}
+                        </Stack>
+
+                        <Typography sx={{ mt: 1.25 }} fontWeight={950} fontSize={18}>
+                          {clean(post.title)}
                         </Typography>
-                      )}
 
-                      {/* ✅ Image (FIXED): show full image, no crop */}
-     {/* ✅ Image (FULL): contain, no crop */}
-{!!clean(post.imageUrl) && (
-  <Box
-    sx={{
-      mt: 1.5,
-      width: "100%",
-      borderRadius: 2,
-      border: "1px solid",
-      borderColor: "divider",
-      overflow: "hidden",
-      bgcolor: "grey.100",
-    }}
-  >
-    <Box
-      component="img"
-      src={clean(post.imageUrl)}
-      alt=""
-      loading="lazy"
-      decoding="async"
-      sx={{
-        width: "100%",
-        height: { xs: "auto", sm: 520 },   // pick a stable max height for desktop
-        maxHeight: 520,
-        display: "block",
-        objectFit: "contain",
-        bgcolor: "grey.100",
-      }}
-    />
-  </Box>
-)}
+                        {!!clean(post.content) && (
+                          <Typography sx={{ mt: 1 }} color="text.secondary" style={{ whiteSpace: "pre-wrap" }}>
+                            {post.content}
+                          </Typography>
+                        )}
 
-
-                      {/* ✅ Video (at end of post) */}
-                      {!!embed && (
-                        <Box sx={{ mt: 1.5 }}>
+                        {/* ✅ Image (FULL): contain, no crop */}
+                        {!!clean(post.imageUrl) && (
                           <Box
                             sx={{
+                              mt: 1.5,
                               width: "100%",
-                              aspectRatio: "16 / 9",
                               borderRadius: 2,
                               border: "1px solid",
                               borderColor: "divider",
                               overflow: "hidden",
-                              bgcolor: "common.black",
+                              bgcolor: "grey.100",
                             }}
                           >
                             <Box
-                              component="iframe"
-                              src={embed}
-                              title="YouTube video"
+                              component="img"
+                              src={clean(post.imageUrl)}
+                              alt=""
                               loading="lazy"
-                              sx={{ width: "100%", height: "100%", border: 0 }}
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                              allowFullScreen
+                              decoding="async"
+                              sx={{
+                                width: "100%",
+                                height: { xs: "auto", sm: 520 },
+                                maxHeight: 520,
+                                display: "block",
+                                objectFit: "contain",
+                                bgcolor: "grey.100",
+                              }}
                             />
                           </Box>
-                        </Box>
-                      )}
-
-                      {/* Counts */}
-                      <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
-                        <Button
-                          onClick={() => canInteract && setUsersOpen(true)}
-                          disabled={!canInteract}
-                          sx={{ textTransform: "none", fontWeight: 950, borderRadius: 999 }}
-                        >
-                          {likes} Likes · {dislikes} Dislikes
-                        </Button>
-
-                        <Box sx={{ flex: 1 }} />
-
-                        <Typography variant="caption" color="text.secondary" fontWeight={900}>
-                          {post.commentsCount} comments
-                        </Typography>
-                      </Stack>
-
-                      <Divider sx={{ my: 1.25 }} />
-
-                      {/* Actions */}
-                      <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: "wrap" }}>
-                        <ReactionButton
-                          active={myReaction === true}
-                          label="Like"
-                          icon={<ThumbUpAltOutlinedIcon />}
-                          onClick={onLike}
-                        />
-                        <ReactionButton
-                          active={myReaction === false}
-                          label="Dislike"
-                          icon={<ThumbDownAltOutlinedIcon />}
-                          onClick={onDislike}
-                        />
-                        <Button
-                          startIcon={<ForumOutlinedIcon />}
-                          sx={{ textTransform: "none", fontWeight: 950, borderRadius: 999 }}
-                          onClick={() => {
-                            const el = document.getElementById("comments");
-                            if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-                          }}
-                        >
-                          Comment
-                        </Button>
-
-                        {(reactMutation.isPending || addCommentMutation.isPending) && (
-                          <Stack direction="row" spacing={1} alignItems="center" sx={{ ml: 1 }}>
-                            <CircularProgress size={16} />
-                            <Typography variant="caption" color="text.secondary" fontWeight={900}>
-                              Updating…
-                            </Typography>
-                          </Stack>
                         )}
-                      </Stack>
 
-                      {/* Comments */}
-                      <Box id="comments" sx={{ mt: 2 }}>
-                        <Typography fontWeight={950} sx={{ mb: 1 }}>
-                          Comments
-                        </Typography>
+                        {/* ✅ Video (at end of post) */}
+                        {!!embed && (
+                          <Box sx={{ mt: 1.5 }}>
+                            <Box
+                              sx={{
+                                width: "100%",
+                                aspectRatio: "16 / 9",
+                                borderRadius: 2,
+                                border: "1px solid",
+                                borderColor: "divider",
+                                overflow: "hidden",
+                                bgcolor: "common.black",
+                              }}
+                            >
+                              <Box
+                                component="iframe"
+                                src={embed}
+                                title="YouTube video"
+                                loading="lazy"
+                                sx={{ width: "100%", height: "100%", border: 0 }}
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                allowFullScreen
+                              />
+                            </Box>
+                          </Box>
+                        )}
 
-                        {!canInteract ? (
-                          <Box
-                            sx={{
-                              p: 2,
-                              borderRadius: 2,
-                              border: "1px solid",
-                              borderColor: "divider",
-                              bgcolor: "grey.50",
+                        {/* Counts */}
+                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
+                          <Button
+                            onClick={() => canInteract && setUsersOpen(true)}
+                            disabled={!canInteract}
+                            sx={{ textTransform: "none", fontWeight: 950, borderRadius: 999 }}
+                          >
+                            {likes} Likes · {dislikes} Dislikes
+                          </Button>
+
+                          <Box sx={{ flex: 1 }} />
+
+                          <Typography variant="caption" color="text.secondary" fontWeight={900}>
+                            {post.commentsCount} comments
+                          </Typography>
+                        </Stack>
+
+                        <Divider sx={{ my: 1.25 }} />
+
+                        {/* Actions */}
+                        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: "wrap" }}>
+                          <ReactionButton
+                            active={myReaction === true}
+                            label="Like"
+                            icon={<ThumbUpAltOutlinedIcon />}
+                            onClick={onLike}
+                          />
+                          <ReactionButton
+                            active={myReaction === false}
+                            label="Dislike"
+                            icon={<ThumbDownAltOutlinedIcon />}
+                            onClick={onDislike}
+                          />
+                          <Button
+                            startIcon={<ForumOutlinedIcon />}
+                            sx={{ textTransform: "none", fontWeight: 950, borderRadius: 999 }}
+                            onClick={() => {
+                              const el = document.getElementById("comments");
+                              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
                             }}
                           >
-                            <Typography fontWeight={900}>Sign in to view and write comments.</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              Your backend requires auth for comments and reactions.
-                            </Typography>
-                          </Box>
-                        ) : (
-                          <>
-                            <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
-                              <TextField
-                                value={commentText}
-                                onChange={(e) => setCommentText(e.target.value)}
-                                placeholder="Write a comment…"
-                                fullWidth
-                                size="small"
-                              />
-                              <Button
-                                variant="contained"
-                                onClick={submitComment}
-                                sx={{ textTransform: "none", fontWeight: 950, borderRadius: 2 }}
-                              >
-                                Post
-                              </Button>
+                            Comment
+                          </Button>
+
+                          {(reactMutation.isPending || addCommentMutation.isPending) && (
+                            <Stack direction="row" spacing={1} alignItems="center" sx={{ ml: 1 }}>
+                              <CircularProgress size={16} />
+                              <Typography variant="caption" color="text.secondary" fontWeight={900}>
+                                Updating…
+                              </Typography>
+                            </Stack>
+                          )}
+                        </Stack>
+
+                        {/* Comments */}
+                        <Box id="comments" sx={{ mt: 2 }}>
+                          <Typography fontWeight={950} sx={{ mb: 1 }}>
+                            Comments
+                          </Typography>
+
+                          {!canInteract ? (
+                            <Box
+                              sx={{
+                                p: 2,
+                                borderRadius: 2,
+                                border: "1px solid",
+                                borderColor: "divider",
+                                bgcolor: "grey.50",
+                              }}
+                            >
+                              <Typography fontWeight={900}>Sign in to view and write comments.</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Your backend requires auth for comments and reactions.
+                              </Typography>
                             </Box>
+                          ) : (
+                            <>
+                              <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
+                                <TextField
+                                  value={commentText}
+                                  onChange={(e) => setCommentText(e.target.value)}
+                                  placeholder="Write a comment…"
+                                  fullWidth
+                                  size="small"
+                                />
+                                <Button
+                                  variant="contained"
+                                  onClick={submitComment}
+                                  sx={{ textTransform: "none", fontWeight: 950, borderRadius: 2 }}
+                                >
+                                  Post
+                                </Button>
+                              </Box>
 
-                            <Box sx={{ mt: 2 }}>
-                              {commentsQuery.isLoading ? (
-                                <Typography color="text.secondary" fontWeight={800}>
-                                  Loading comments…
-                                </Typography>
-                              ) : commentsQuery.error ? (
-                                <Typography color="error" fontWeight={900}>
-                                  {(commentsQuery.error as any)?.message ?? "Failed to load comments"}
-                                </Typography>
-                              ) : (
-                                <Stack spacing={1.25}>
-                                  {(commentsQuery.data ?? []).map((c) => (
-                                    <Box
-                                      key={c.id}
-                                      sx={{
-                                        p: 1.5,
-                                        borderRadius: 2,
-                                        border: "1px solid",
-                                        borderColor: "divider",
-                                        bgcolor: "common.white",
-                                      }}
-                                    >
-                                      <Stack direction="row" spacing={1} alignItems="center">
-                                        <Avatar src={c.userPhotoUrl ?? undefined} sx={{ width: 28, height: 28 }}>
-                                          {(clean(c.userName)?.[0] ?? "U").toUpperCase()}
-                                        </Avatar>
-                                        <Box sx={{ minWidth: 0, flex: 1 }}>
-                                          <Typography fontWeight={950} fontSize={13} noWrap>
-                                            {clean(c.userName) || "User"}
-                                          </Typography>
-                                          <TimeAgo
-                                            iso={c.createdAt}
-                                            variant="caption"
-                                            sx={{ color: "text.secondary", fontWeight: 900 }}
-                                          />
-                                        </Box>
+                              <Box sx={{ mt: 2 }}>
+                                {commentsQuery.isLoading ? (
+                                  <Stack spacing={1.25}>
+                                    <Skeleton variant="rounded" height={92} />
+                                    <Skeleton variant="rounded" height={92} />
+                                  </Stack>
+                                ) : commentsQuery.error ? (
+                                  <Typography color="error" fontWeight={900}>
+                                    {(commentsQuery.error as any)?.message ?? "Failed to load comments"}
+                                  </Typography>
+                                ) : (
+                                  <Stack spacing={1.25}>
+                                    {(commentsQuery.data ?? []).map((c) => (
+                                      <Box
+                                        key={c.id}
+                                        sx={{
+                                          p: 1.5,
+                                          borderRadius: 2,
+                                          border: "1px solid",
+                                          borderColor: "divider",
+                                          bgcolor: "common.white",
+                                        }}
+                                      >
+                                        <Stack direction="row" spacing={1} alignItems="center">
+                                          <Avatar src={c.userPhotoUrl ?? undefined} sx={{ width: 28, height: 28 }}>
+                                            {(clean(c.userName)?.[0] ?? "U").toUpperCase()}
+                                          </Avatar>
 
-                                        <Button
-                                          onClick={() => deleteCommentMutation.mutate(c.id)}
-                                          sx={{ textTransform: "none", fontWeight: 900 }}
-                                        >
-                                          Delete
-                                        </Button>
-                                      </Stack>
+                                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                                            <Typography fontWeight={950} fontSize={13} noWrap>
+                                              {clean(c.userName) || "User"}
+                                            </Typography>
+                                            <TimeAgo
+                                              iso={c.createdAt}
+                                              variant="caption"
+                                              sx={{ color: "text.secondary", fontWeight: 900 }}
+                                            />
+                                          </Box>
 
-                                      <Typography sx={{ mt: 1 }} color="text.secondary" style={{ whiteSpace: "pre-wrap" }}>
-                                        {c.content}
-                                      </Typography>
-                                    </Box>
-                                  ))}
-                                </Stack>
-                              )}
-                            </Box>
-                          </>
-                        )}
-                      </Box>
-                    </>
-                  )}
+                                          {canDeleteComment(c) ? (
+                                            <Button
+                                              onClick={() => deleteCommentMutation.mutate(c.id)}
+                                              sx={{ textTransform: "none", fontWeight: 900 }}
+                                            >
+                                              Delete
+                                            </Button>
+                                          ) : null}
+                                        </Stack>
+
+                                        <Typography sx={{ mt: 1 }} color="text.secondary" style={{ whiteSpace: "pre-wrap" }}>
+                                          {c.content}
+                                        </Typography>
+                                      </Box>
+                                    ))}
+                                  </Stack>
+                                )}
+                              </Box>
+                            </>
+                          )}
+                        </Box>
+                      </>
+                    )}
+                  </Box>
                 </Box>
-              </Box>
+              )}
             </Box>
 
             {/* RIGHT spacer */}
@@ -750,7 +829,11 @@ export default function PostDetailShell({ postId }: { postId: string }) {
 
           {/* Mobile/tablet: Latest below */}
           <Box sx={{ mt: 2, display: { xs: "block", lg: "none" } }}>
-            <TopSideBar title="Latest" items={latestItems as any} onOpen={() => {}} />
+            {latestQuery.isLoading ? (
+              <Skeleton variant="rounded" height={420} />
+            ) : (
+              <TopSideBar title="Latest" items={latestItems as any} onOpen={onOpenNews} />
+            )}
           </Box>
         </Box>
       </Box>

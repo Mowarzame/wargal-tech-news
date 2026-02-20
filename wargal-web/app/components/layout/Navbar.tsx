@@ -20,6 +20,7 @@ import {
   ListItemText,
   Menu,
   MenuItem,
+  Skeleton,
   Tab,
   Tabs,
   Toolbar,
@@ -32,7 +33,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import { useTheme } from "@mui/material/styles";
 
 import { fetchFeedSources } from "@/app/lib/api";
-import { NewsSource } from "@/app/types/news";
+import type { NewsSource } from "@/app/types/news";
 import { useAuth } from "@/app/providers/AuthProvider";
 import GoogleSignInButton from "@/app/components/auth/GoogleSignInButton";
 
@@ -46,14 +47,14 @@ export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("md")); // ✅ xs/sm only behavior
+  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
 
   const { isReady, isAuthed, user, logout, loginWithGoogleProfile } = useAuth();
 
   const [sources, setSources] = React.useState<NewsSource[]>([]);
   const [loginOpen, setLoginOpen] = React.useState(false);
   const [loginError, setLoginError] = React.useState<string | null>(null);
-  const [loginHint, setLoginHint] = React.useState<string | null>(null); // ✅ message shown in dialog
+  const [loginHint, setLoginHint] = React.useState<string | null>(null);
 
   // user menu (desktop)
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
@@ -131,7 +132,7 @@ export default function Navbar() {
   };
 
   const go = (path: string) => {
-    // ✅ Gate community access behind auth (desktop tabs + logo etc can still navigate)
+    // ✅ Gate community access behind auth
     if (path === "/community" && isReady && !isAuthed) {
       openLogin("Sign-in is required to access the Community page.");
       return;
@@ -159,18 +160,20 @@ export default function Navbar() {
     router.push("/community");
   };
 
+  // ✅ Always reserve a stable right-side width to prevent navbar shifting on reload/hydration
+  const RIGHT_WIDTH_DESKTOP = 170; // sign-in button / avatar area
+  const RIGHT_WIDTH_MOBILE = 56; // hamburger or avatar+hamburger
+
   return (
-    <AppBar position="sticky" elevation={0}>
-      <Toolbar sx={{ minHeight: 64, gap: 2 }}>
-        {/* Left: Logo (reliable navigation) */}
+    <AppBar position="sticky" elevation={0} sx={{ height: 64 }}>
+      <Toolbar sx={{ minHeight: "64px !important", height: 64, gap: 2 }}>
+        {/* Left: Logo */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
           <Box
             component={Link}
             href="/"
             prefetch
-            onClick={() => {
-              window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-            }}
+            onClick={() => window.scrollTo({ top: 0, left: 0, behavior: "smooth" })}
             sx={{ display: "inline-flex", alignItems: "center" }}
             aria-label="Go to home"
           >
@@ -190,13 +193,7 @@ export default function Navbar() {
         </Box>
 
         {/* Desktop tabs (md+ only, always show) */}
-        <Box
-          sx={{
-            display: { xs: "none", md: "flex" },
-            alignItems: "center",
-            minWidth: 0,
-          }}
-        >
+        <Box sx={{ display: { xs: "none", md: "flex" }, alignItems: "center", minWidth: 0 }}>
           <Tabs
             value={tabValue}
             onChange={onTabChange}
@@ -213,10 +210,30 @@ export default function Navbar() {
           </Tabs>
         </Box>
 
-        {/* Right: auth + mobile hamburger */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        {/* Right: ALWAYS render same structure/width (prevents layout jump on reload) */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            width: { xs: RIGHT_WIDTH_MOBILE, md: RIGHT_WIDTH_DESKTOP },
+            justifyContent: "flex-end",
+            flexShrink: 0,
+          }}
+        >
           {!isReady ? (
-            <Box sx={{ width: 120 }} />
+            <>
+              {/* Desktop skeleton */}
+              <Box sx={{ display: { xs: "none", md: "flex" }, alignItems: "center", gap: 1 }}>
+                <Skeleton variant="rounded" width={110} height={32} sx={{ borderRadius: 999 }} />
+                <Skeleton variant="circular" width={32} height={32} />
+              </Box>
+
+              {/* Mobile skeleton */}
+              <Box sx={{ display: { xs: "flex", md: "none" }, alignItems: "center", gap: 1 }}>
+                <Skeleton variant="circular" width={32} height={32} />
+              </Box>
+            </>
           ) : !isAuthed ? (
             <>
               {/* Desktop: Sign in button */}
@@ -228,10 +245,16 @@ export default function Navbar() {
                   textTransform: "none",
                   fontWeight: 900,
                   borderRadius: 999,
+                  height: 32,
                 }}
               >
                 Sign in
               </Button>
+
+              {/* Desktop: placeholder avatar slot to keep footprint identical */}
+              <Box sx={{ display: { xs: "none", md: "inline-flex" } }}>
+                <Avatar sx={{ width: 32, height: 32, bgcolor: "rgba(255,255,255,0.25)" }}>?</Avatar>
+              </Box>
 
               {/* Mobile: hamburger */}
               <IconButton
@@ -244,13 +267,15 @@ export default function Navbar() {
             </>
           ) : (
             <>
-              {/* Desktop: user menu */}
+              {/* Desktop: user menu (avatar always 32x32) */}
               <Box sx={{ display: { xs: "none", md: "flex" }, alignItems: "center", gap: 1 }}>
                 <IconButton onClick={onOpenMenu} sx={{ color: "common.white" }} aria-label="Open user menu">
                   {clean(user?.profilePictureUrl) ? (
                     <Avatar src={user?.profilePictureUrl ?? undefined} sx={{ width: 32, height: 32 }} />
                   ) : (
-                    <AccountCircleIcon />
+                    <Avatar sx={{ width: 32, height: 32, bgcolor: "rgba(255,255,255,0.25)" }}>
+                      {(clean(user?.name)?.[0] ?? "U").toUpperCase()}
+                    </Avatar>
                   )}
                 </IconButton>
 
@@ -266,7 +291,13 @@ export default function Navbar() {
                     </Box>
                   </MenuItem>
 
-                  <MenuItem onClick={() => go("/")} sx={{ fontWeight: 900 }}>
+                  <MenuItem
+                    onClick={() => {
+                      onCloseMenu();
+                      router.push("/");
+                    }}
+                    sx={{ fontWeight: 900 }}
+                  >
                     News
                   </MenuItem>
                   <MenuItem onClick={goCommunityFromMenu} sx={{ fontWeight: 900 }}>
@@ -290,7 +321,7 @@ export default function Navbar() {
                 </Menu>
               </Box>
 
-              {/* Mobile: avatar + hamburger */}
+              {/* Mobile: avatar + hamburger (fixed footprint) */}
               <Box sx={{ display: { xs: "flex", md: "none" }, alignItems: "center", gap: 1 }}>
                 {clean(user?.profilePictureUrl) ? (
                   <Avatar src={user?.profilePictureUrl ?? undefined} sx={{ width: 32, height: 32 }} />
@@ -309,7 +340,7 @@ export default function Navbar() {
         </Box>
       </Toolbar>
 
-      {/* ✅ Mobile hamburger drawer (xs/sm only) */}
+      {/* ✅ Mobile hamburger drawer */}
       <Drawer
         open={drawerOpen}
         onClose={closeDrawer}
@@ -342,7 +373,12 @@ export default function Navbar() {
 
           <Divider />
 
-          {!isReady ? null : !isAuthed ? (
+          {!isReady ? (
+            <Box sx={{ px: 2, py: 1.5 }}>
+              <Skeleton variant="text" width={140} />
+              <Skeleton variant="text" width={220} />
+            </Box>
+          ) : !isAuthed ? (
             <ListItemButton
               onClick={() => {
                 closeDrawer();

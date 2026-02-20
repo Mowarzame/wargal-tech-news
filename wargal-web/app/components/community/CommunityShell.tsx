@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, Skeleton } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 
 import { useAuth } from "@/app/providers/AuthProvider";
@@ -21,8 +21,30 @@ function isEditorOrAdmin(role?: string | null) {
   return r === "admin" || r === "editor";
 }
 
+function CommunityFeedSkeleton() {
+  return (
+    <Box sx={{ minWidth: 0 }}>
+      <Skeleton variant="text" width={160} height={34} sx={{ mb: 1 }} />
+      <Skeleton variant="rounded" height={130} sx={{ mb: 2 }} />
+      <Skeleton variant="rounded" height={520} sx={{ mb: 2 }} />
+      <Skeleton variant="rounded" height={520} sx={{ mb: 2 }} />
+    </Box>
+  );
+}
+
+function LatestSkeleton({ height = 560 }: { height?: number }) {
+  return <Skeleton variant="rounded" height={height} />;
+}
+
 export default function CommunityShell() {
   const { isReady, isAuthed, user } = useAuth();
+
+  // ✅ Force skeleton to appear immediately on first paint (prevents blank screen)
+  const [showInitialSkeleton, setShowInitialSkeleton] = React.useState(true);
+  React.useEffect(() => {
+    const id = requestAnimationFrame(() => setShowInitialSkeleton(false));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   // Posts polling for "real-time"
   const postsQ = useQuery({
@@ -42,7 +64,13 @@ export default function CommunityShell() {
     },
     enabled: true,
     refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
+
+  const posts = (postsQ.data ?? []) as PostDto[];
+  const latest = (latestQ.data ?? []) as NewsItem[];
+
+  const canPost = isEditorOrAdmin(user?.role);
 
   const onOpenNews = (it: NewsItem) => {
     const url = clean(it?.url);
@@ -50,7 +78,40 @@ export default function CommunityShell() {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  if (!isReady) return <Box sx={{ p: 2 }} />;
+  // ✅ Determine when to show skeletons
+  const postsStillLoading =
+    showInitialSkeleton ||
+    postsQ.isLoading ||
+    (!!postsQ.isFetching && posts.length === 0);
+
+  const latestStillLoading =
+    showInitialSkeleton ||
+    latestQ.isLoading ||
+    (!!latestQ.isFetching && latest.length === 0);
+
+  if (!isReady) {
+    // ✅ show skeleton instead of empty padding
+    return (
+      <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh", px: { xs: 1.5, md: 2 }, py: 2 }}>
+        <Box sx={{ maxWidth: 1280, mx: "auto" }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", lg: "320px minmax(0,1fr) 320px" },
+              gap: 2,
+              alignItems: "start",
+            }}
+          >
+            <Box sx={{ display: { xs: "none", lg: "block" }, position: "sticky", top: 86 }}>
+              <LatestSkeleton />
+            </Box>
+            <CommunityFeedSkeleton />
+            <Box sx={{ display: { xs: "none", lg: "block" } }} />
+          </Box>
+        </Box>
+      </Box>
+    );
+  }
 
   if (!isAuthed) {
     return (
@@ -77,10 +138,6 @@ export default function CommunityShell() {
     );
   }
 
-  const canPost = isEditorOrAdmin(user?.role);
-  const posts = (postsQ.data ?? []) as PostDto[];
-  const latest = (latestQ.data ?? []) as NewsItem[];
-
   return (
     <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }}>
       <Box sx={{ px: { xs: 1.5, md: 2 }, py: 2 }}>
@@ -94,13 +151,17 @@ export default function CommunityShell() {
               gridTemplateColumns: {
                 xs: "1fr",
                 md: "1fr",
-                lg: "320px minmax(0,1fr) 320px", // left + center + right spacer
+                lg: "320px minmax(0,1fr) 320px",
               },
             }}
           >
             {/* LEFT (only large screens): Latest */}
             <Box sx={{ display: { xs: "none", lg: "block" }, position: "sticky", top: 86 }}>
-              <TopSideBar title="Latest" items={latest} onOpen={onOpenNews} />
+              {latestStillLoading ? (
+                <LatestSkeleton />
+              ) : (
+                <TopSideBar title="Latest" items={latest} onOpen={onOpenNews} />
+              )}
             </Box>
 
             {/* CENTER: Feed */}
@@ -112,20 +173,9 @@ export default function CommunityShell() {
               {/* composer */}
               {canPost && <PostComposer user={user!} />}
 
-              {/* Feed states */}
-              {postsQ.isLoading ? (
-                <Box
-                  sx={{
-                    mt: 1.5,
-                    bgcolor: "background.paper",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 2,
-                    p: 3,
-                  }}
-                >
-                  <Typography fontWeight={900}>Loading posts…</Typography>
-                </Box>
+              {/* ✅ Skeleton first, then normal states */}
+              {postsStillLoading ? (
+                <CommunityFeedSkeleton />
               ) : postsQ.isError ? (
                 <Box
                   sx={{
@@ -171,13 +221,17 @@ export default function CommunityShell() {
               )}
             </Box>
 
-            {/* RIGHT spacer / optional content to center the feed like Facebook */}
+            {/* RIGHT spacer */}
             <Box sx={{ display: { xs: "none", lg: "block" } }} />
           </Box>
 
           {/* Mobile/tablet: Latest below */}
           <Box sx={{ mt: 2, display: { xs: "block", lg: "none" } }}>
-            <TopSideBar title="Latest" items={latest} onOpen={onOpenNews} />
+            {latestStillLoading ? (
+              <LatestSkeleton height={420} />
+            ) : (
+              <TopSideBar title="Latest" items={latest} onOpen={onOpenNews} />
+            )}
           </Box>
         </Box>
       </Box>
