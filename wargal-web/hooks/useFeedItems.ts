@@ -9,6 +9,6 @@ export function useFeedItems(params: {
   return useQuery({
     queryKey: ["feed-items", params],
     queryFn: () => fetchFeedItems(params),
-    refetchInterval: 60_000, // 🔥 auto refresh every 60s
+    refetchInterval: 20_000, // 🔥 auto refresh every 60s
   });
 }
