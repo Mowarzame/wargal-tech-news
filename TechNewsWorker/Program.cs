@@ -6,7 +6,7 @@ using TechNewsWorker.Services;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// ✅ Always show logs in terminal
+// Logging
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(o =>
 {
@@ -15,64 +15,83 @@ builder.Logging.AddSimpleConsole(o =>
 });
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 
-// ✅ PROOF Program.cs is running
 Console.WriteLine($"BOOT: Worker starting @ {DateTime.UtcNow:o}");
 
 // Options
-builder.Services.Configure<IngestionOptions>(builder.Configuration.GetSection("Ingestion"));
-builder.Services.Configure<YouTubeOptions>(builder.Configuration.GetSection("YouTube"));
+builder.Services.Configure<IngestionOptions>(
+    builder.Configuration.GetSection("Ingestion"));
 
-// DbContext
+builder.Services.Configure<YouTubeOptions>(
+    builder.Configuration.GetSection("YouTube"));
+
+// Database
 builder.Services.AddDbContext<WorkerDbContext>(opt =>
 {
     var cs = builder.Configuration.GetConnectionString("DefaultConnection");
+
+    if (string.IsNullOrWhiteSpace(cs))
+        throw new InvalidOperationException(
+            "ConnectionStrings:DefaultConnection is not configured.");
+
     opt.UseNpgsql(cs);
 });
 
-// HttpClient
+// Http client
 builder.Services.AddHttpClient("ingestion", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(20);
-    c.DefaultRequestHeaders.UserAgent.ParseAdd("SomTechNewsWorker/1.0");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("WargalNewsWorker/1.0");
 });
 
-// ✅ Add a heartbeat service that prints every 30 seconds (proves process is alive)
+// Heartbeat
 builder.Services.AddHostedService<WorkerHeartbeatService>();
 
-// Your ingestion services
+// Ingestion services
 builder.Services.AddHostedService<RssIngestionService>();
 builder.Services.AddHostedService<YouTubeIngestionService>();
 builder.Services.AddHostedService<InternalPostsIngestionService>();
 
-
 var host = builder.Build();
 
-// ✅ PROOF options values at runtime (catches appsettings overrides)
+// Log actual interval values
 using (var scope = host.Services.CreateScope())
 {
-    var opt = scope.ServiceProvider.GetRequiredService<IOptions<IngestionOptions>>().Value;
-    Console.WriteLine($"BOOT: IngestionOptions => RSS={opt.RssTickMinutes}m, YT={opt.YouTubeTickMinutes}m, MaxSources={opt.MaxSourcesPerRun}, MaxItems={opt.MaxItemsPerSource}");
+    var opt = scope.ServiceProvider
+        .GetRequiredService<IOptions<IngestionOptions>>().Value;
+
+    Console.WriteLine(
+        $"BOOT: RSS interval = {opt.GetRssInterval()}, " +
+        $"YouTube interval = {opt.GetYouTubeInterval()}, " +
+        $"MaxSources = {opt.MaxSourcesPerRun}, " +
+        $"MaxItems = {opt.MaxItemsPerSource}");
 }
 
 host.Run();
 
 
-// ------------------------------
-// ✅ Heartbeat hosted service
-// ------------------------------
+// Heartbeat service
 public sealed class WorkerHeartbeatService : BackgroundService
 {
     private readonly ILogger<WorkerHeartbeatService> _logger;
-    public WorkerHeartbeatService(ILogger<WorkerHeartbeatService> logger) => _logger = logger;
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public WorkerHeartbeatService(
+        ILogger<WorkerHeartbeatService> logger)
     {
-        _logger.LogInformation("HEARTBEAT: started @ {NowUtc:o}", DateTime.UtcNow);
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(
+        CancellationToken stoppingToken)
+    {
+        _logger.LogInformation(
+            "HEARTBEAT started @ {NowUtc:o}", DateTime.UtcNow);
 
         var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            _logger.LogInformation("HEARTBEAT: alive @ {NowUtc:o}", DateTime.UtcNow);
+            _logger.LogInformation(
+                "HEARTBEAT alive @ {NowUtc:o}", DateTime.UtcNow);
         }
     }
 }

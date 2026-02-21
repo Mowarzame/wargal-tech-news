@@ -51,3 +51,9 @@ tech_news_app/build/
 # If any tool creates folders with literal backslashes in the name (bad paths)
 **/bin\\**
 **/obj\\**
+
+
+appsettings.Development.json
+appsettings.Local.json
+*.Development.json
+*.Local.json
