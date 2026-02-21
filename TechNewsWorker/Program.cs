@@ -28,10 +28,8 @@ builder.Services.Configure<YouTubeOptions>(
 builder.Services.AddDbContext<WorkerDbContext>(opt =>
 {
     var cs = builder.Configuration.GetConnectionString("DefaultConnection");
-
     if (string.IsNullOrWhiteSpace(cs))
-        throw new InvalidOperationException(
-            "ConnectionStrings:DefaultConnection is not configured.");
+        throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
 
     opt.UseNpgsql(cs);
 });
@@ -39,7 +37,7 @@ builder.Services.AddDbContext<WorkerDbContext>(opt =>
 // Http client
 builder.Services.AddHttpClient("ingestion", c =>
 {
-    c.Timeout = TimeSpan.FromSeconds(20);
+    c.Timeout = TimeSpan.FromSeconds(25);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("WargalNewsWorker/1.0");
 });
 
@@ -53,45 +51,42 @@ builder.Services.AddHostedService<InternalPostsIngestionService>();
 
 var host = builder.Build();
 
-// Log actual interval values
+// Log interval values at boot
 using (var scope = host.Services.CreateScope())
 {
-    var opt = scope.ServiceProvider
-        .GetRequiredService<IOptions<IngestionOptions>>().Value;
+    var opt = scope.ServiceProvider.GetRequiredService<IOptions<IngestionOptions>>().Value;
 
     Console.WriteLine(
-        $"BOOT: RSS interval = {opt.GetRssInterval()}, " +
-        $"YouTube interval = {opt.GetYouTubeInterval()}, " +
-        $"MaxSources = {opt.MaxSourcesPerRun}, " +
-        $"MaxItems = {opt.MaxItemsPerSource}");
+        $"BOOT: RSS tickSec={opt.RssTickSeconds}, " +
+        $"YT tickSec={opt.YouTubeTickSeconds}, " +
+        $"MaxSourcesPerRun={opt.MaxSourcesPerRun}, " +
+        $"MaxItemsPerSource={opt.MaxItemsPerSource}, " );
 }
 
 host.Run();
 
 
+// ------------------------------
 // Heartbeat service
+// ------------------------------
 public sealed class WorkerHeartbeatService : BackgroundService
 {
     private readonly ILogger<WorkerHeartbeatService> _logger;
 
-    public WorkerHeartbeatService(
-        ILogger<WorkerHeartbeatService> logger)
+    public WorkerHeartbeatService(ILogger<WorkerHeartbeatService> logger)
     {
         _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(
-        CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation(
-            "HEARTBEAT started @ {NowUtc:o}", DateTime.UtcNow);
+        _logger.LogInformation("HEARTBEAT started @ {NowUtc:o}", DateTime.UtcNow);
 
         var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
 
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            _logger.LogInformation(
-                "HEARTBEAT alive @ {NowUtc:o}", DateTime.UtcNow);
+            _logger.LogInformation("HEARTBEAT alive @ {NowUtc:o}", DateTime.UtcNow);
         }
     }
 }
