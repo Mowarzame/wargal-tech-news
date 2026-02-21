@@ -42,7 +42,9 @@ protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         _logger.LogError("YT: API key missing (YouTube:ApiKey).");
         return;
     }
-var timer = new PeriodicTimer(_opt.GetYouTubeInterval());
+var timer = new PeriodicTimer(TimeSpan.FromSeconds(
+    Math.Max(5, _opt.YouTubeTickMinutes * 60)
+));
 
     _logger.LogInformation("YT: first RunOnce BEGIN @ {NowUtc:o}", DateTime.UtcNow);
     await RunOnce(stoppingToken);
@@ -303,25 +305,28 @@ private async Task IngestSource(WorkerDbContext db, HttpClient http, NewsSource 
 private void TouchSchedule(NewsSource src, bool ok)
 {
     var now = DateTimeOffset.UtcNow;
+
     src.LastFetchedAt = now;
     src.UpdatedAt = now;
 
-    // Prefer seconds; fall back to minutes if seconds not set or invalid
-    var baseSeconds =
-        (src.FetchIntervalSeconds > 0)
+    // Use seconds from DB, fallback to minutes if needed
+    var intervalSeconds =
+        src.FetchIntervalSeconds > 0
             ? src.FetchIntervalSeconds
             : Math.Max(1, src.FetchIntervalMinutes) * 60;
 
-    // If failure, apply backoff (in seconds) with a cap (12 hours)
     if (!ok)
     {
-        var multiplier = Math.Max(2, src.ErrorCount + 1);
-        var backoffSeconds = Math.Min(baseSeconds * multiplier, 12 * 60 * 60);
+        var backoffSeconds = Math.Min(
+            intervalSeconds * Math.Max(2, src.ErrorCount + 1),
+            12 * 60 * 60
+        );
+
         src.NextFetchAt = now.AddSeconds(backoffSeconds);
     }
     else
     {
-        src.NextFetchAt = now.AddSeconds(baseSeconds);
+        src.NextFetchAt = now.AddSeconds(intervalSeconds);
     }
 }
 
