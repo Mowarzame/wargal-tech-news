@@ -57,3 +57,8 @@ appsettings.Development.json
 appsettings.Local.json
 *.Development.json
 *.Local.json
+
+# Never commit appsettings with secrets
+**/appsettings.json
+**/appsettings.*.json
+!**/appsettings.json.example

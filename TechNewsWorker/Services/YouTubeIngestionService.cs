@@ -42,8 +42,7 @@ protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         _logger.LogError("YT: API key missing (YouTube:ApiKey).");
         return;
     }
-
-    var timer = new PeriodicTimer(TimeSpan.FromMinutes(_opt.YouTubeTickMinutes));
+var timer = new PeriodicTimer(_opt.GetYouTubeInterval());
 
     _logger.LogInformation("YT: first RunOnce BEGIN @ {NowUtc:o}", DateTime.UtcNow);
     await RunOnce(stoppingToken);
@@ -67,7 +66,7 @@ private async Task RunOnce(CancellationToken ct)
 
      _logger.LogInformation("YT TICK @ {NowUtc:o}", DateTime.UtcNow);
     var runId = Guid.NewGuid().ToString("N")[..8];
-    var nowUtc = DateTime.UtcNow;
+var nowUtc = DateTimeOffset.UtcNow;
 
     try
     {
@@ -80,7 +79,7 @@ private async Task RunOnce(CancellationToken ct)
         var activeCount = await db.NewsSources.AsNoTracking()
             .CountAsync(s => s.IsActive && s.Type == NewsSourceType.YouTubeChannel && s.YouTubeChannelId != null, ct);
 
-        var safeEpochUtc = DateTime.UnixEpoch;
+        var safeEpochUtc = DateTimeOffset.UnixEpoch;
 
         var due = await db.NewsSources
             .AsNoTracking()
@@ -303,24 +302,28 @@ private async Task IngestSource(WorkerDbContext db, HttpClient http, NewsSource 
 
 private void TouchSchedule(NewsSource src, bool ok)
 {
-    var now = DateTime.UtcNow;
+    var now = DateTimeOffset.UtcNow;
     src.LastFetchedAt = now;
     src.UpdatedAt = now;
 
-    // ✅ FORCE 2 minutes always
-    const int interval = 2;
+    // Prefer seconds; fall back to minutes if seconds not set or invalid
+    var baseSeconds =
+        (src.FetchIntervalSeconds > 0)
+            ? src.FetchIntervalSeconds
+            : Math.Max(1, src.FetchIntervalMinutes) * 60;
 
+    // If failure, apply backoff (in seconds) with a cap (12 hours)
     if (!ok)
     {
-        var backoff = Math.Min(interval * Math.Max(2, src.ErrorCount + 1), 12 * 60);
-        src.NextFetchAt = now.AddMinutes(backoff);
+        var multiplier = Math.Max(2, src.ErrorCount + 1);
+        var backoffSeconds = Math.Min(baseSeconds * multiplier, 12 * 60 * 60);
+        src.NextFetchAt = now.AddSeconds(backoffSeconds);
     }
     else
     {
-        src.NextFetchAt = now.AddMinutes(interval);
+        src.NextFetchAt = now.AddSeconds(baseSeconds);
     }
 }
-
 
         private void LogSchedule(string tag, NewsSource src)
         {
