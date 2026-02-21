@@ -1,35 +1,39 @@
-namespace TechNewsWorker.Options;
+using System;
 
-public sealed class IngestionOptions
+namespace TechNewsWorker.Options
 {
-    // IMPORTANT:
-    // TickSeconds = how often the worker "checks for due sources".
-    // The real per-source schedule is stored in DB: FetchIntervalSeconds -> NextFetchAt.
-
-    // Keep ticks small so 30-second schedules are actually respected.
-    public int RssTickSeconds { get; set; } = 5;
-    public int YouTubeTickSeconds { get; set; } = 5;
-
-    // Limits
-    public int MaxSourcesPerRun { get; set; } = 50;
-    public int MaxItemsPerSource { get; set; } = 50;
-
-    // Paging safety caps
-    public int MaxYouTubePagesPerSource { get; set; } = 5;
-
-    // Fix for "missing items":
-    // Only stop paging when we see many consecutive known items (not just one).
-    public int KnownStopThreshold { get; set; } = 25;
-
-    public TimeSpan GetRssTickInterval()
+    public sealed class IngestionOptions
     {
-        var sec = Math.Clamp(RssTickSeconds, 2, 60);
-        return TimeSpan.FromSeconds(sec);
-    }
+        // Backward compatibility (Render already has these)
+        public int RssTickMinutes { get; set; } = 2;
+        public int YouTubeTickMinutes { get; set; } = 2;
 
-    public TimeSpan GetYouTubeTickInterval()
-    {
-        var sec = Math.Clamp(YouTubeTickSeconds, 2, 60);
-        return TimeSpan.FromSeconds(sec);
+        // New: seconds precision (Render will use these)
+        public int? RssTickSeconds { get; set; }
+        public int? YouTubeTickSeconds { get; set; }
+
+        public int MaxSourcesPerRun { get; set; } = 20;
+        public int MaxItemsPerSource { get; set; } = 25;
+
+        private const int MinRssSeconds = 5;
+        private const int MinYouTubeSeconds = 10;
+
+        public TimeSpan GetRssInterval()
+        {
+            var seconds = RssTickSeconds ?? (RssTickMinutes * 60);
+            if (seconds < MinRssSeconds)
+                seconds = MinRssSeconds;
+
+            return TimeSpan.FromSeconds(seconds);
+        }
+
+        public TimeSpan GetYouTubeInterval()
+        {
+            var seconds = YouTubeTickSeconds ?? (YouTubeTickMinutes * 60);
+            if (seconds < MinYouTubeSeconds)
+                seconds = MinYouTubeSeconds;
+
+            return TimeSpan.FromSeconds(seconds);
+        }
     }
 }
