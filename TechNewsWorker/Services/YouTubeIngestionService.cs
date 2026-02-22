@@ -1,13 +1,11 @@
 // File: TechNewsWorker/Services/YouTubeIngestionService.cs
-// ✅ Final: 30s-ready scheduling + robust YouTube ingestion with pagination
-// ✅ Key fixes:
-//   - Uses DateTimeOffset consistently (matches your model)
-//   - Uses DB per-source FetchIntervalSeconds (fallback to minutes)
-//   - Uses PeriodicTimer with seconds precision (no hardcoded 2 minutes)
-//   - Adds pagination via nextPageToken, stops early when hitting known IDs
-//   - Batch-checks existing ExternalIds per page (fast, avoids per-item AnyAsync)
-//   - Handles "Private video" / "Deleted video" safely
-//   - Better logging to prove when new items are found/inserted
+// ✅ Final: seconds-accurate scheduling + parallel due-source execution + robust YouTube ingestion
+// Key fixes:
+//   - Uses _opt.GetYouTubeInterval() (so YouTubeTickSeconds works)
+//   - Prevents starvation: processes due sources in parallel with MaxParallelFetches
+//   - Uses one DbContext per task (safe EF Core usage)
+//   - Due query filters out empty channel IDs (not only null)
+//   - Keeps per-source FetchIntervalSeconds scheduling (NextFetchAt / LastFetchedAt)
 
 using System.Globalization;
 using System.Net;
@@ -28,8 +26,7 @@ namespace TechNewsWorker.Services
         private readonly IngestionOptions _opt;
         private readonly YouTubeOptions _yt;
 
-        // Safety caps
-        private const int MaxPageFetchesPerSource = 5; // up to 5 pages * 50 = 250 items max per run per source
+        private const int MaxPageFetchesPerSource = 5;
         private const int MaxYouTubeMaxResults = 50;
 
         public YouTubeIngestionService(
@@ -48,8 +45,14 @@ namespace TechNewsWorker.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            var tickSeconds = Math.Max(5, _opt.YouTubeTickMinutes * 60); // your options class can be improved, but this is safe
-            _logger.LogInformation("YT: ExecuteAsync STARTED @ {NowUtc:o} tickSec={TickSec}", DateTimeOffset.UtcNow, tickSeconds);
+            var interval = _opt.GetYouTubeInterval();
+
+            _logger.LogInformation(
+                "YT: ExecuteAsync STARTED @ {NowUtc:o} interval={Interval} maxPerRun={MaxPerRun} maxParallel={MaxPar}",
+                DateTimeOffset.UtcNow,
+                interval,
+                _opt.MaxSourcesPerRun,
+                Math.Max(1, _opt.MaxParallelFetches));
 
             if (string.IsNullOrWhiteSpace(_yt.ApiKey))
             {
@@ -57,7 +60,7 @@ namespace TechNewsWorker.Services
                 return;
             }
 
-            var timer = new PeriodicTimer(TimeSpan.FromSeconds(tickSeconds));
+            using var timer = new PeriodicTimer(interval);
 
             _logger.LogInformation("YT: first RunOnce BEGIN @ {NowUtc:o}", DateTimeOffset.UtcNow);
             await RunOnce(stoppingToken);
@@ -66,10 +69,7 @@ namespace TechNewsWorker.Services
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
                 _logger.LogInformation("YT: TIMER TICK @ {NowUtc:o}", DateTimeOffset.UtcNow);
-
-                _logger.LogInformation("YT: RunOnce BEGIN @ {NowUtc:o}", DateTimeOffset.UtcNow);
                 await RunOnce(stoppingToken);
-                _logger.LogInformation("YT: RunOnce END   @ {NowUtc:o}", DateTimeOffset.UtcNow);
             }
         }
 
@@ -80,54 +80,67 @@ namespace TechNewsWorker.Services
 
             try
             {
+                // Use a lightweight scope only for the due list query
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
-                var http = _httpClientFactory.CreateClient("ingestion");
-
-                _logger.LogInformation("YT[{Run}]: tick nowUtc={Now:o}", runId, nowUtc);
-
-                var activeCount = await db.NewsSources.AsNoTracking()
-                    .CountAsync(s => s.IsActive && s.Type == NewsSourceType.YouTubeChannel && s.YouTubeChannelId != null, ct);
 
                 var safeEpochUtc = DateTimeOffset.UnixEpoch;
 
-                var due = await db.NewsSources
-                    .AsNoTracking()
-                    .Where(s => s.IsActive
-                                && s.Type == NewsSourceType.YouTubeChannel
-                                && s.YouTubeChannelId != null
-                                && (s.NextFetchAt == null || s.NextFetchAt <= nowUtc))
+                // Count active sources (for logging)
+                var activeCount = await db.NewsSources.AsNoTracking()
+                    .CountAsync(s =>
+                        s.IsActive &&
+                        s.Type == NewsSourceType.YouTubeChannel &&
+                        s.YouTubeChannelId != null &&
+                        s.YouTubeChannelId != "", ct);
+
+                // Only pull the minimal columns needed to dispatch work
+                var due = await db.NewsSources.AsNoTracking()
+                    .Where(s =>
+                        s.IsActive &&
+                        s.Type == NewsSourceType.YouTubeChannel &&
+                        s.YouTubeChannelId != null &&
+                        s.YouTubeChannelId != "" &&
+                        (s.NextFetchAt == null || s.NextFetchAt <= nowUtc))
                     .OrderBy(s => s.NextFetchAt ?? safeEpochUtc)
                     .Take(_opt.MaxSourcesPerRun)
-                    .Select(s => new { s.Id, s.Name, s.YouTubeChannelId, s.YouTubeUploadsPlaylistId, s.NextFetchAt })
+                    .Select(s => new
+                    {
+                        s.Id,
+                        s.Name,
+                        s.YouTubeChannelId,
+                        s.YouTubeUploadsPlaylistId,
+                        s.NextFetchAt
+                    })
                     .ToListAsync(ct);
 
                 _logger.LogInformation(
-                    "YT[{Run}]: active={Active} due={Due} maxPerRun={Max}",
-                    runId, activeCount, due.Count, _opt.MaxSourcesPerRun);
+                    "YT[{Run}]: active={Active} due={Due} maxPerRun={Max} nowUtc={Now:o}",
+                    runId, activeCount, due.Count, _opt.MaxSourcesPerRun, nowUtc);
 
                 if (due.Count == 0)
                     return;
 
-                foreach (var s in due)
+                var maxParallel = Math.Max(1, _opt.MaxParallelFetches);
+                using var gate = new SemaphoreSlim(maxParallel);
+
+                // Dispatch due sources in parallel with a safe cap
+                var tasks = due.Select(async d =>
                 {
-                    ct.ThrowIfCancellationRequested();
+                    await gate.WaitAsync(ct);
+                    try
+                    {
+                        await ProcessOneSource(runId, d.Id, ct);
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                }).ToList();
 
-                    var src = await db.NewsSources.FirstAsync(x => x.Id == s.Id, ct);
+                await Task.WhenAll(tasks);
 
-                    _logger.LogInformation(
-                        "YT[{Run}]: start source={Name} id={Id} nextFetchAt={Next:o} channel={Channel} uploads={Uploads}",
-                        runId, src.Name, src.Id, src.NextFetchAt, src.YouTubeChannelId, src.YouTubeUploadsPlaylistId);
-
-                    await IngestSource(db, http, src, ct);
-
-                    await db.SaveChangesAsync(ct);
-
-                    var gapSec = (src.NextFetchAt!.Value - src.LastFetchedAt!.Value).TotalSeconds;
-                    _logger.LogInformation(
-                        "YT[{Run}]: done  source={Name} lastFetchedAt={Last:o} nextFetchAt={Next:o} gapSec={Gap} err={Err} lastErr={LastErr}",
-                        runId, src.Name, src.LastFetchedAt, src.NextFetchAt, gapSec, src.ErrorCount, src.LastError);
-                }
+                _logger.LogInformation("YT[{Run}]: RunOnce COMPLETE due={Due} maxParallel={MaxPar}", runId, due.Count, maxParallel);
             }
             catch (OperationCanceledException)
             {
@@ -137,6 +150,27 @@ namespace TechNewsWorker.Services
             {
                 _logger.LogError(ex, "YT[{Run}]: run failed.", runId);
             }
+        }
+
+        private async Task ProcessOneSource(string runId, Guid sourceId, CancellationToken ct)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
+            var http = _httpClientFactory.CreateClient("ingestion");
+
+            var src = await db.NewsSources.FirstAsync(x => x.Id == sourceId, ct);
+
+            _logger.LogInformation(
+                "YT[{Run}]: start source={Name} id={Id} nextFetchAt={Next:o} channel={Channel} uploads={Uploads}",
+                runId, src.Name, src.Id, src.NextFetchAt, src.YouTubeChannelId, src.YouTubeUploadsPlaylistId);
+
+            await IngestSource(db, http, src, ct);
+            await db.SaveChangesAsync(ct);
+
+            var gapSec = (src.NextFetchAt!.Value - src.LastFetchedAt!.Value).TotalSeconds;
+            _logger.LogInformation(
+                "YT[{Run}]: done  source={Name} lastFetchedAt={Last:o} nextFetchAt={Next:o} gapSec={Gap} err={Err} lastErr={LastErr}",
+                runId, src.Name, src.LastFetchedAt, src.NextFetchAt, gapSec, src.ErrorCount, src.LastError);
         }
 
         private async Task IngestSource(WorkerDbContext db, HttpClient http, NewsSource src, CancellationToken ct)
@@ -159,7 +193,8 @@ namespace TechNewsWorker.Services
                         TouchSchedule(src, ok: false);
                         src.ErrorCount += 1;
                         src.LastError = "Unable to resolve uploads playlist id.";
-                        _logger.LogWarning("YT: cannot resolve uploads playlist source={Name} channel={Channel}",
+                        _logger.LogWarning(
+                            "YT: cannot resolve uploads playlist source={Name} channel={Channel}",
                             src.Name, src.YouTubeChannelId);
                         return;
                     }
@@ -167,20 +202,17 @@ namespace TechNewsWorker.Services
                     src.YouTubeUploadsPlaylistId = uploads.Trim();
                     src.UpdatedAt = DateTimeOffset.UtcNow;
 
-                    _logger.LogInformation("YT: resolved uploads playlist source={Name} uploads={Uploads}",
+                    _logger.LogInformation(
+                        "YT: resolved uploads playlist source={Name} uploads={Uploads}",
                         src.Name, src.YouTubeUploadsPlaylistId);
                 }
 
-                // We fetch up to 50 per page. If you want "newest faster", keep it 50.
                 var maxResults = Math.Min(Math.Max(1, _opt.MaxItemsPerSource), MaxYouTubeMaxResults);
                 string? pageToken = null;
                 var pagesFetched = 0;
                 var totalCandidates = 0;
                 var totalAdded = 0;
 
-                // If you want to stop paging based on time, we can use src.LastFetchedAt,
-                // but not all feeds guarantee publishedAt ordering during propagation.
-                // We'll stop when we hit known IDs (fast and safe).
                 while (pagesFetched < MaxPageFetchesPerSource)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -204,7 +236,8 @@ namespace TechNewsWorker.Services
                         src.ErrorCount += 1;
                         src.LastError = Truncate($"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {body}", 800);
 
-                        _logger.LogWarning("YT: API failed source={Name} status={Status} body={Body}",
+                        _logger.LogWarning(
+                            "YT: API failed source={Name} status={Status} body={Body}",
                             src.Name, (int)resp.StatusCode, body);
                         return;
                     }
@@ -216,7 +249,6 @@ namespace TechNewsWorker.Services
 
                     if (!root.TryGetProperty("items", out var itemsEl) || itemsEl.ValueKind != JsonValueKind.Array)
                     {
-                        // No items isn't an error; schedule normally.
                         TouchSchedule(src, ok: true);
                         src.ErrorCount = 0;
                         src.LastError = null;
@@ -235,7 +267,6 @@ namespace TechNewsWorker.Services
                     if (itemsCount == 0)
                         break;
 
-                    // Build candidates from this page
                     var candidates = new List<(string VideoId, string ExternalId, string Title, JsonElement Snippet)>(itemsCount);
 
                     foreach (var it in itemsEl.EnumerateArray())
@@ -259,7 +290,6 @@ namespace TechNewsWorker.Services
                         if (string.IsNullOrWhiteSpace(title))
                             continue;
 
-                        // YouTube sometimes returns placeholders
                         if (string.Equals(title, "Private video", StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(title, "Deleted video", StringComparison.OrdinalIgnoreCase))
                         {
@@ -271,7 +301,6 @@ namespace TechNewsWorker.Services
 
                     if (candidates.Count == 0)
                     {
-                        // continue to next page if available
                         pageToken = root.TryGetProperty("nextPageToken", out var next0) && next0.ValueKind == JsonValueKind.String
                             ? next0.GetString()
                             : null;
@@ -284,7 +313,6 @@ namespace TechNewsWorker.Services
 
                     totalCandidates += candidates.Count;
 
-                    // Batch-check existing ExternalIds for this page
                     var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
 
                     var existing = await db.FeedItems.AsNoTracking()
@@ -299,9 +327,6 @@ namespace TechNewsWorker.Services
                         "YT: source={Name} page={Page} candidates={Cand} existing={Exist} willInsert={Will}",
                         src.Name, pagesFetched, candidates.Count, existingSet.Count, willInsert);
 
-                    // EARLY STOP: If we are seeing mostly old items (already in DB), we can stop paging
-                    // This is the key that prevents missing "new" due to YouTube ordering shifts:
-                    // we page until we find new ones, then stop when we hit known ones.
                     var hitKnown = false;
                     var addedThisPage = 0;
 
@@ -309,7 +334,6 @@ namespace TechNewsWorker.Services
                     {
                         if (existingSet.Contains(c.ExternalId))
                         {
-                            // Once we hit known items on a page, older pages are almost certainly known.
                             hitKnown = true;
                             continue;
                         }
@@ -347,15 +371,12 @@ namespace TechNewsWorker.Services
 
                     _logger.LogInformation("YT: source={Name} page={Page} added={Added}", src.Name, pagesFetched, addedThisPage);
 
-                    // If we added anything, we keep going only if pageToken exists and we haven't hit known content yet.
-                    // If we hit known, we can stop early.
                     if (hitKnown && totalAdded > 0)
                     {
                         _logger.LogInformation("YT: source={Name} early-stop paging (hit known IDs after adding new).", src.Name);
                         break;
                     }
 
-                    // Get next page token
                     pageToken = root.TryGetProperty("nextPageToken", out var next) && next.ValueKind == JsonValueKind.String
                         ? next.GetString()
                         : null;
@@ -363,7 +384,6 @@ namespace TechNewsWorker.Services
                     if (string.IsNullOrWhiteSpace(pageToken))
                         break;
 
-                    // If we didn’t add anything and we hit known IDs already, stop paging (everything is old)
                     if (totalAdded == 0 && existingSet.Count > 0 && willInsert == 0)
                     {
                         _logger.LogInformation("YT: source={Name} stop paging (no new items on first pages).", src.Name);
@@ -396,7 +416,6 @@ namespace TechNewsWorker.Services
             src.LastFetchedAt = now;
             src.UpdatedAt = now;
 
-            // Use seconds from DB, fallback to minutes if needed
             var intervalSeconds =
                 src.FetchIntervalSeconds > 0
                     ? src.FetchIntervalSeconds
@@ -406,8 +425,7 @@ namespace TechNewsWorker.Services
             {
                 var backoffSeconds = Math.Min(
                     intervalSeconds * Math.Max(2, src.ErrorCount + 1),
-                    12 * 60 * 60
-                );
+                    12 * 60 * 60);
 
                 src.NextFetchAt = now.AddSeconds(backoffSeconds);
             }
@@ -450,7 +468,11 @@ namespace TechNewsWorker.Services
                 return string.IsNullOrWhiteSpace(url) ? null : url.Trim();
             }
 
-            return Get(thumbs, "maxres") ?? Get(thumbs, "standard") ?? Get(thumbs, "high") ?? Get(thumbs, "medium") ?? Get(thumbs, "default");
+            return Get(thumbs, "maxres")
+                   ?? Get(thumbs, "standard")
+                   ?? Get(thumbs, "high")
+                   ?? Get(thumbs, "medium")
+                   ?? Get(thumbs, "default");
         }
 
         private static string? CleanText(string? text)

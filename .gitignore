@@ -1,12 +1,18 @@
+# ==========================================================
 # macOS
+# ==========================================================
 .DS_Store
 
+# ==========================================================
 # Environment files
+# ==========================================================
 .env
 .env.*
 !.env.example
 
+# ==========================================================
 # .NET
+# ==========================================================
 bin/
 obj/
 *.user
@@ -14,51 +20,60 @@ obj/
 *.cache
 *.log
 
+# .NET build outputs (all projects)
+**/bin/
+**/obj/
+
+# ==========================================================
+# ASP.NET Core appsettings (SECRETS PROTECTED)
+# ==========================================================
+
+# Ignore ALL real appsettings files everywhere
+**/appsettings.json
+**/appsettings.*.json
+
+# Allow ONLY example template files
+!**/appsettings.json.example
+!**/appsettings.*.json.example
+
+# ==========================================================
 # Node / Next.js
+# ==========================================================
 node_modules/
 .next/
 out/
 dist/
 
+# ==========================================================
 # Flutter / Android
+# ==========================================================
 build/
 .android/
 .ios/
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
-
-# Docker
-*.tar
-
-# IDEs
-.vscode/
-.idea/
-
-# Logs
-logs/
-
-# .NET build outputs (all projects)
-**/bin/
-**/obj/
-
-# Flutter build outputs
 tech_news_app/build/
 
 # Flutter/Android tooling + logs/archives
 **/bugreport-*.zip
 
-# If any tool creates folders with literal backslashes in the name (bad paths)
+# ==========================================================
+# Docker
+# ==========================================================
+*.tar
+
+# ==========================================================
+# IDEs
+# ==========================================================
+.vscode/
+.idea/
+
+# ==========================================================
+# Logs
+# ==========================================================
+logs/
+
+# If any tool creates folders with literal backslashes in the name
 **/bin\\**
 **/obj\\**
-
-
-appsettings.Development.json
-appsettings.Local.json
-*.Development.json
-*.Local.json
-
-# Never commit appsettings with secrets
-**/appsettings.json
-**/appsettings.*.json
-!**/appsettings.json.example

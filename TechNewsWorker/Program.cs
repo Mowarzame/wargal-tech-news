@@ -62,8 +62,9 @@ using (var scope = host.Services.CreateScope())
     Console.WriteLine(
         $"BOOT: RSS interval = {opt.GetRssInterval()}, " +
         $"YouTube interval = {opt.GetYouTubeInterval()}, " +
-        $"MaxSources = {opt.MaxSourcesPerRun}, " +
-        $"MaxItems = {opt.MaxItemsPerSource}");
+        $"MaxSourcesPerRun = {opt.MaxSourcesPerRun}, " +
+        $"MaxItemsPerSource = {opt.MaxItemsPerSource}, " +
+        $"MaxParallelFetches = {opt.MaxParallelFetches}");
 }
 
 host.Run();
@@ -74,24 +75,20 @@ public sealed class WorkerHeartbeatService : BackgroundService
 {
     private readonly ILogger<WorkerHeartbeatService> _logger;
 
-    public WorkerHeartbeatService(
-        ILogger<WorkerHeartbeatService> logger)
+    public WorkerHeartbeatService(ILogger<WorkerHeartbeatService> logger)
     {
         _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(
-        CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation(
-            "HEARTBEAT started @ {NowUtc:o}", DateTime.UtcNow);
+        _logger.LogInformation("HEARTBEAT started @ {NowUtc:o}", DateTime.UtcNow);
 
-        var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
 
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            _logger.LogInformation(
-                "HEARTBEAT alive @ {NowUtc:o}", DateTime.UtcNow);
+            _logger.LogInformation("HEARTBEAT alive @ {NowUtc:o}", DateTime.UtcNow);
         }
     }
 }
