@@ -1,10 +1,8 @@
-using System;
-
 namespace TechNewsWorker.Options
 {
     public sealed class IngestionOptions
     {
-        // Backward compatibility (existing deployments)
+        // Backward compatibility
         public int RssTickMinutes { get; set; } = 2;
         public int YouTubeTickMinutes { get; set; } = 2;
 
@@ -12,15 +10,14 @@ namespace TechNewsWorker.Options
         public int? RssTickSeconds { get; set; }
         public int? YouTubeTickSeconds { get; set; }
 
-        // Scheduling / load control
         public int MaxSourcesPerRun { get; set; } = 50;
         public int MaxItemsPerSource { get; set; } = 25;
 
-        // ✅ NEW: parallelism cap per RunOnce (prevents “skipping/starvation”)
-        public int MaxParallelFetches { get; set; } = 5;
+        // ✅ Used by BOTH RSS & YouTube services for parallel execution
+        public int MaxParallelFetches { get; set; } = 3;
 
-        private const int MinRssSeconds = 5;
-        private const int MinYouTubeSeconds = 10;
+        private const int MinRssSeconds = 10;     // RSS can be frequent but keep sane
+        private const int MinYouTubeSeconds = 60; // YouTube quota protection baseline
 
         public TimeSpan GetRssInterval()
         {

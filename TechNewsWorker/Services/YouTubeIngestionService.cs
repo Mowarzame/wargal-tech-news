@@ -1,12 +1,3 @@
-// File: TechNewsWorker/Services/YouTubeIngestionService.cs
-// ✅ Final: seconds-accurate scheduling + parallel due-source execution + robust YouTube ingestion
-// Key fixes:
-//   - Uses _opt.GetYouTubeInterval() (so YouTubeTickSeconds works)
-//   - Prevents starvation: processes due sources in parallel with MaxParallelFetches
-//   - Uses one DbContext per task (safe EF Core usage)
-//   - Due query filters out empty channel IDs (not only null)
-//   - Keeps per-source FetchIntervalSeconds scheduling (NextFetchAt / LastFetchedAt)
-
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
@@ -26,7 +17,8 @@ namespace TechNewsWorker.Services
         private readonly IngestionOptions _opt;
         private readonly YouTubeOptions _yt;
 
-        private const int MaxPageFetchesPerSource = 5;
+        // ✅ QUOTA SAFE: only 1 page per run per source
+        private const int MaxPageFetchesPerSource = 1;
         private const int MaxYouTubeMaxResults = 50;
 
         public YouTubeIngestionService(
@@ -48,11 +40,8 @@ namespace TechNewsWorker.Services
             var interval = _opt.GetYouTubeInterval();
 
             _logger.LogInformation(
-                "YT: ExecuteAsync STARTED @ {NowUtc:o} interval={Interval} maxPerRun={MaxPerRun} maxParallel={MaxPar}",
-                DateTimeOffset.UtcNow,
-                interval,
-                _opt.MaxSourcesPerRun,
-                Math.Max(1, _opt.MaxParallelFetches));
+                "YT: START @ {NowUtc:o} interval={Interval} maxPerRun={MaxPerRun} maxParallel={MaxPar}",
+                DateTimeOffset.UtcNow, interval, _opt.MaxSourcesPerRun, Math.Max(1, _opt.MaxParallelFetches));
 
             if (string.IsNullOrWhiteSpace(_yt.ApiKey))
             {
@@ -62,13 +51,10 @@ namespace TechNewsWorker.Services
 
             using var timer = new PeriodicTimer(interval);
 
-            _logger.LogInformation("YT: first RunOnce BEGIN @ {NowUtc:o}", DateTimeOffset.UtcNow);
             await RunOnce(stoppingToken);
-            _logger.LogInformation("YT: first RunOnce END   @ {NowUtc:o}", DateTimeOffset.UtcNow);
 
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                _logger.LogInformation("YT: TIMER TICK @ {NowUtc:o}", DateTimeOffset.UtcNow);
                 await RunOnce(stoppingToken);
             }
         }
@@ -80,79 +66,51 @@ namespace TechNewsWorker.Services
 
             try
             {
-                // Use a lightweight scope only for the due list query
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
 
                 var safeEpochUtc = DateTimeOffset.UnixEpoch;
 
-                // Count active sources (for logging)
-                var activeCount = await db.NewsSources.AsNoTracking()
-                    .CountAsync(s =>
-                        s.IsActive &&
-                        s.Type == NewsSourceType.YouTubeChannel &&
-                        s.YouTubeChannelId != null &&
-                        s.YouTubeChannelId != "", ct);
-
-                // Only pull the minimal columns needed to dispatch work
-                var due = await db.NewsSources.AsNoTracking()
+                var dueIds = await db.NewsSources.AsNoTracking()
                     .Where(s =>
                         s.IsActive &&
                         s.Type == NewsSourceType.YouTubeChannel &&
-                        s.YouTubeChannelId != null &&
-                        s.YouTubeChannelId != "" &&
+                        s.YouTubeChannelId != null && s.YouTubeChannelId != "" &&
                         (s.NextFetchAt == null || s.NextFetchAt <= nowUtc))
                     .OrderBy(s => s.NextFetchAt ?? safeEpochUtc)
                     .Take(_opt.MaxSourcesPerRun)
-                    .Select(s => new
-                    {
-                        s.Id,
-                        s.Name,
-                        s.YouTubeChannelId,
-                        s.YouTubeUploadsPlaylistId,
-                        s.NextFetchAt
-                    })
+                    .Select(s => s.Id)
                     .ToListAsync(ct);
 
-                _logger.LogInformation(
-                    "YT[{Run}]: active={Active} due={Due} maxPerRun={Max} nowUtc={Now:o}",
-                    runId, activeCount, due.Count, _opt.MaxSourcesPerRun, nowUtc);
+                _logger.LogInformation("YT[{Run}]: due={Due} nowUtc={Now:o}", runId, dueIds.Count, nowUtc);
 
-                if (due.Count == 0)
-                    return;
+                if (dueIds.Count == 0) return;
 
                 var maxParallel = Math.Max(1, _opt.MaxParallelFetches);
                 using var gate = new SemaphoreSlim(maxParallel);
 
-                // Dispatch due sources in parallel with a safe cap
-                var tasks = due.Select(async d =>
+                var tasks = dueIds.Select(async id =>
                 {
                     await gate.WaitAsync(ct);
-                    try
-                    {
-                        await ProcessOneSource(runId, d.Id, ct);
-                    }
-                    finally
-                    {
-                        gate.Release();
-                    }
+                    try { await ProcessOne(runId, id, ct); }
+                    finally { gate.Release(); }
                 }).ToList();
 
                 await Task.WhenAll(tasks);
 
-                _logger.LogInformation("YT[{Run}]: RunOnce COMPLETE due={Due} maxParallel={MaxPar}", runId, due.Count, maxParallel);
+                _logger.LogInformation("YT[{Run}]: COMPLETE due={Due} maxParallel={MaxPar}", runId, dueIds.Count, maxParallel);
             }
             catch (OperationCanceledException)
             {
-                _logger.LogWarning("YT[{Run}]: cancelled.", runId);
+                _logger.LogWarning("YT: cancelled");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "YT[{Run}]: run failed.", runId);
+                _logger.LogError(ex, "YT: RunOnce failed");
             }
         }
 
-        private async Task ProcessOneSource(string runId, Guid sourceId, CancellationToken ct)
+        private async Task ProcessOne(string runId, Guid sourceId, CancellationToken ct)
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
@@ -160,259 +118,184 @@ namespace TechNewsWorker.Services
 
             var src = await db.NewsSources.FirstAsync(x => x.Id == sourceId, ct);
 
-            _logger.LogInformation(
-                "YT[{Run}]: start source={Name} id={Id} nextFetchAt={Next:o} channel={Channel} uploads={Uploads}",
-                runId, src.Name, src.Id, src.NextFetchAt, src.YouTubeChannelId, src.YouTubeUploadsPlaylistId);
+            try
+            {
+                await IngestSource(db, http, src, ct);
+                await db.SaveChangesAsync(ct);
 
-            await IngestSource(db, http, src, ct);
-            await db.SaveChangesAsync(ct);
-
-            var gapSec = (src.NextFetchAt!.Value - src.LastFetchedAt!.Value).TotalSeconds;
-            _logger.LogInformation(
-                "YT[{Run}]: done  source={Name} lastFetchedAt={Last:o} nextFetchAt={Next:o} gapSec={Gap} err={Err} lastErr={LastErr}",
-                runId, src.Name, src.LastFetchedAt, src.NextFetchAt, gapSec, src.ErrorCount, src.LastError);
+                var gapSec = (src.NextFetchAt!.Value - src.LastFetchedAt!.Value).TotalSeconds;
+                _logger.LogInformation("YT[{Run}]: done source={Name} gapSec={Gap} next={Next:o} err={Err} lastErr={LastErr}",
+                    runId, src.Name, gapSec, src.NextFetchAt, src.ErrorCount, src.LastError);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "YT[{Run}]: source failed source={Name}", runId, src.Name);
+            }
         }
 
         private async Task IngestSource(WorkerDbContext db, HttpClient http, NewsSource src, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(src.YouTubeChannelId))
             {
-                TouchSchedule(src, ok: true);
-                _logger.LogWarning("YT: skipped missing channelId source={Name}", src.Name);
+                TouchScheduleOk(src);
                 return;
             }
 
-            try
+            // Resolve uploads playlist id if missing
+            if (string.IsNullOrWhiteSpace(src.YouTubeUploadsPlaylistId))
             {
-                // Resolve uploads playlist id if missing
-                if (string.IsNullOrWhiteSpace(src.YouTubeUploadsPlaylistId))
+                var uploads = await ResolveUploadsPlaylistId(http, src.YouTubeChannelId!, ct);
+                if (string.IsNullOrWhiteSpace(uploads))
                 {
-                    var uploads = await ResolveUploadsPlaylistId(http, src.YouTubeChannelId!, ct);
-                    if (string.IsNullOrWhiteSpace(uploads))
-                    {
-                        TouchSchedule(src, ok: false);
-                        src.ErrorCount += 1;
-                        src.LastError = "Unable to resolve uploads playlist id.";
-                        _logger.LogWarning(
-                            "YT: cannot resolve uploads playlist source={Name} channel={Channel}",
-                            src.Name, src.YouTubeChannelId);
-                        return;
-                    }
-
-                    src.YouTubeUploadsPlaylistId = uploads.Trim();
-                    src.UpdatedAt = DateTimeOffset.UtcNow;
-
-                    _logger.LogInformation(
-                        "YT: resolved uploads playlist source={Name} uploads={Uploads}",
-                        src.Name, src.YouTubeUploadsPlaylistId);
+                    TouchScheduleFail(src, "Unable to resolve uploads playlist id.");
+                    return;
                 }
 
-                var maxResults = Math.Min(Math.Max(1, _opt.MaxItemsPerSource), MaxYouTubeMaxResults);
-                string? pageToken = null;
-                var pagesFetched = 0;
-                var totalCandidates = 0;
-                var totalAdded = 0;
+                src.YouTubeUploadsPlaylistId = uploads.Trim();
+                src.UpdatedAt = DateTimeOffset.UtcNow;
+            }
 
-                while (pagesFetched < MaxPageFetchesPerSource)
+            var maxResults = Math.Min(Math.Max(1, _yt.MaxResults), MaxYouTubeMaxResults);
+
+            string? pageToken = null;
+            var pagesFetched = 0;
+            var totalAdded = 0;
+
+            while (pagesFetched < MaxPageFetchesPerSource)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var url =
+                    "https://www.googleapis.com/youtube/v3/playlistItems" +
+                    "?part=snippet,contentDetails" +
+                    $"&playlistId={Uri.EscapeDataString(src.YouTubeUploadsPlaylistId!)}" +
+                    $"&maxResults={maxResults}" +
+                    $"&key={Uri.EscapeDataString(_yt.ApiKey)}";
+
+                if (!string.IsNullOrWhiteSpace(pageToken))
+                    url += $"&pageToken={Uri.EscapeDataString(pageToken)}";
+
+                using var resp = await http.GetAsync(url, ct);
+
+                // ✅ Special handling: quota exceeded => cooldown (don’t snowball ErrorCount)
+                if (resp.StatusCode == HttpStatusCode.Forbidden)
                 {
-                    ct.ThrowIfCancellationRequested();
-
-                    var url =
-                        "https://www.googleapis.com/youtube/v3/playlistItems" +
-                        "?part=snippet,contentDetails" +
-                        $"&playlistId={Uri.EscapeDataString(src.YouTubeUploadsPlaylistId!)}" +
-                        $"&maxResults={maxResults}" +
-                        $"&key={Uri.EscapeDataString(_yt.ApiKey)}";
-
-                    if (!string.IsNullOrWhiteSpace(pageToken))
-                        url += $"&pageToken={Uri.EscapeDataString(pageToken)}";
-
-                    using var resp = await http.GetAsync(url, ct);
-
-                    if (!resp.IsSuccessStatusCode)
+                    var body = await resp.Content.ReadAsStringAsync(ct);
+                    if (body.Contains("quotaExceeded", StringComparison.OrdinalIgnoreCase))
                     {
-                        var body = await resp.Content.ReadAsStringAsync(ct);
-                        TouchSchedule(src, ok: false);
-                        src.ErrorCount += 1;
-                        src.LastError = Truncate($"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {body}", 800);
-
-                        _logger.LogWarning(
-                            "YT: API failed source={Name} status={Status} body={Body}",
-                            src.Name, (int)resp.StatusCode, body);
+                        TouchQuotaCooldown(src, "YouTube quota exceeded.");
+                        _logger.LogWarning("YT: quotaExceeded source={Name} cooldownMin={Min}", src.Name, _yt.QuotaCooldownMinutes);
                         return;
                     }
+                }
 
-                    await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-                    using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    var body = await resp.Content.ReadAsStringAsync(ct);
+                    TouchScheduleFail(src, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 500)}");
+                    return;
+                }
 
-                    var root = doc.RootElement;
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
 
-                    if (!root.TryGetProperty("items", out var itemsEl) || itemsEl.ValueKind != JsonValueKind.Array)
-                    {
-                        TouchSchedule(src, ok: true);
-                        src.ErrorCount = 0;
-                        src.LastError = null;
-                        src.Cursor = null;
-                        _logger.LogInformation("YT: no items array source={Name}", src.Name);
-                        return;
-                    }
+                var root = doc.RootElement;
 
-                    var itemsCount = itemsEl.GetArrayLength();
-                    pagesFetched++;
+                if (!root.TryGetProperty("items", out var itemsEl) || itemsEl.ValueKind != JsonValueKind.Array)
+                    break;
 
-                    _logger.LogInformation(
-                        "YT: page={Page} itemsReturned={Count} source={Name} token={Token}",
-                        pagesFetched, itemsCount, src.Name, pageToken ?? "(first)");
+                pagesFetched++;
 
-                    if (itemsCount == 0)
-                        break;
+                var candidates = new List<(string VideoId, string ExternalId, string Title, JsonElement Snippet)>();
 
-                    var candidates = new List<(string VideoId, string ExternalId, string Title, JsonElement Snippet)>(itemsCount);
-
-                    foreach (var it in itemsEl.EnumerateArray())
-                    {
-                        ct.ThrowIfCancellationRequested();
-
-                        if (!it.TryGetProperty("contentDetails", out var cd) || cd.ValueKind != JsonValueKind.Object)
-                            continue;
-
-                        var videoId = cd.TryGetProperty("videoId", out var vidEl) && vidEl.ValueKind == JsonValueKind.String
-                            ? vidEl.GetString()
-                            : null;
-
-                        if (string.IsNullOrWhiteSpace(videoId))
-                            continue;
-
-                        if (!it.TryGetProperty("snippet", out var snippet) || snippet.ValueKind != JsonValueKind.Object)
-                            continue;
-
-                        var title = snippet.TryGetProperty("title", out var titleEl) ? titleEl.GetString()?.Trim() : null;
-                        if (string.IsNullOrWhiteSpace(title))
-                            continue;
-
-                        if (string.Equals(title, "Private video", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(title, "Deleted video", StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-
-                        candidates.Add((videoId!, Truncate(videoId!, 300)!, title!, snippet));
-                    }
-
-                    if (candidates.Count == 0)
-                    {
-                        pageToken = root.TryGetProperty("nextPageToken", out var next0) && next0.ValueKind == JsonValueKind.String
-                            ? next0.GetString()
-                            : null;
-
-                        if (string.IsNullOrWhiteSpace(pageToken))
-                            break;
-
+                foreach (var it in itemsEl.EnumerateArray())
+                {
+                    if (!it.TryGetProperty("contentDetails", out var cd) || cd.ValueKind != JsonValueKind.Object)
                         continue;
-                    }
 
-                    totalCandidates += candidates.Count;
-
-                    var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
-
-                    var existing = await db.FeedItems.AsNoTracking()
-                        .Where(x => x.SourceId == src.Id && extIds.Contains(x.ExternalId))
-                        .Select(x => x.ExternalId)
-                        .ToListAsync(ct);
-
-                    var existingSet = existing.Count == 0 ? new HashSet<string>() : new HashSet<string>(existing);
-
-                    var willInsert = candidates.Count(c => !existingSet.Contains(c.ExternalId));
-                    _logger.LogInformation(
-                        "YT: source={Name} page={Page} candidates={Cand} existing={Exist} willInsert={Will}",
-                        src.Name, pagesFetched, candidates.Count, existingSet.Count, willInsert);
-
-                    var hitKnown = false;
-                    var addedThisPage = 0;
-
-                    foreach (var c in candidates)
-                    {
-                        if (existingSet.Contains(c.ExternalId))
-                        {
-                            hitKnown = true;
-                            continue;
-                        }
-
-                        var snippet = c.Snippet;
-
-                        var desc = snippet.TryGetProperty("description", out var descEl) ? descEl.GetString() : null;
-                        var publishedAtRaw = snippet.TryGetProperty("publishedAt", out var pubEl) ? pubEl.GetString() : null;
-                        var channelTitle = snippet.TryGetProperty("channelTitle", out var ctEl) ? ctEl.GetString() : null;
-
-                        var published = ParseYouTubeDate(publishedAtRaw) ?? DateTime.UtcNow;
-                        var thumbsUrl = TryGetBestThumbnailUrl(snippet);
-
-                        db.FeedItems.Add(new FeedItem
-                        {
-                            Id = Guid.NewGuid(),
-                            SourceId = src.Id,
-                            ExternalId = c.ExternalId,
-                            Kind = FeedItemKind.Video,
-                            Title = Truncate(c.Title, 500),
-                            Summary = Truncate(CleanText(desc), 2000),
-                            LinkUrl = Truncate($"https://www.youtube.com/watch?v={c.VideoId}", 1200),
-                            ImageUrl = Truncate(thumbsUrl, 1200),
-                            PublishedAt = published,
-                            ImportedAt = DateTime.UtcNow,
-                            Author = Truncate(channelTitle, 200),
-                            YouTubeVideoId = Truncate(c.VideoId, 50),
-                            EmbedUrl = Truncate($"https://www.youtube.com/embed/{c.VideoId}", 200),
-                            IsActive = true,
-                        });
-
-                        addedThisPage++;
-                        totalAdded++;
-                    }
-
-                    _logger.LogInformation("YT: source={Name} page={Page} added={Added}", src.Name, pagesFetched, addedThisPage);
-
-                    if (hitKnown && totalAdded > 0)
-                    {
-                        _logger.LogInformation("YT: source={Name} early-stop paging (hit known IDs after adding new).", src.Name);
-                        break;
-                    }
-
-                    pageToken = root.TryGetProperty("nextPageToken", out var next) && next.ValueKind == JsonValueKind.String
-                        ? next.GetString()
+                    var videoId = cd.TryGetProperty("videoId", out var vidEl) && vidEl.ValueKind == JsonValueKind.String
+                        ? vidEl.GetString()
                         : null;
 
-                    if (string.IsNullOrWhiteSpace(pageToken))
-                        break;
+                    if (string.IsNullOrWhiteSpace(videoId))
+                        continue;
 
-                    if (totalAdded == 0 && existingSet.Count > 0 && willInsert == 0)
-                    {
-                        _logger.LogInformation("YT: source={Name} stop paging (no new items on first pages).", src.Name);
-                        break;
-                    }
+                    if (!it.TryGetProperty("snippet", out var snippet) || snippet.ValueKind != JsonValueKind.Object)
+                        continue;
+
+                    var title = snippet.TryGetProperty("title", out var titleEl) ? titleEl.GetString()?.Trim() : null;
+                    if (string.IsNullOrWhiteSpace(title))
+                        continue;
+
+                    if (string.Equals(title, "Private video", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(title, "Deleted video", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    candidates.Add((videoId!, videoId!, title!, snippet));
                 }
 
-                TouchSchedule(src, ok: true);
-                src.ErrorCount = 0;
-                src.LastError = null;
-                src.Cursor = null;
+                if (candidates.Count == 0)
+                    break;
 
-                _logger.LogInformation(
-                    "YT: finished source={Name} pagesFetched={Pages} totalCandidates={Cand} totalAdded={Added}",
-                    src.Name, pagesFetched, totalCandidates, totalAdded);
+                // batch-check existing ExternalIds
+                var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
+
+                var existing = await db.FeedItems.AsNoTracking()
+                    .Where(x => x.SourceId == src.Id && extIds.Contains(x.ExternalId))
+                    .Select(x => x.ExternalId)
+                    .ToListAsync(ct);
+
+                var existingSet = existing.Count == 0 ? new HashSet<string>() : new HashSet<string>(existing);
+
+                foreach (var c in candidates)
+                {
+                    if (existingSet.Contains(c.ExternalId)) continue;
+
+                    var snippet = c.Snippet;
+
+                    var desc = snippet.TryGetProperty("description", out var descEl) ? descEl.GetString() : null;
+                    var publishedAtRaw = snippet.TryGetProperty("publishedAt", out var pubEl) ? pubEl.GetString() : null;
+                    var channelTitle = snippet.TryGetProperty("channelTitle", out var ctEl) ? ctEl.GetString() : null;
+
+                    var published = ParseYouTubeDate(publishedAtRaw) ?? DateTime.UtcNow;
+                    var thumbsUrl = TryGetBestThumbnailUrl(snippet);
+
+                    db.FeedItems.Add(new FeedItem
+                    {
+                        Id = Guid.NewGuid(),
+                        SourceId = src.Id,
+                        ExternalId = c.ExternalId,
+                        Kind = FeedItemKind.Video,
+                        Title = Truncate(c.Title, 500),
+                        Summary = Truncate(CleanText(desc), 2000),
+                        LinkUrl = Truncate($"https://www.youtube.com/watch?v={c.VideoId}", 1200),
+                        ImageUrl = Truncate(thumbsUrl, 1200),
+                        PublishedAt = published,
+                        ImportedAt = DateTime.UtcNow,
+                        Author = Truncate(channelTitle, 200),
+                        YouTubeVideoId = Truncate(c.VideoId, 50),
+                        EmbedUrl = Truncate($"https://www.youtube.com/embed/{c.VideoId}", 200),
+                        IsActive = true,
+                    });
+
+                    totalAdded++;
+                }
+
+                // we only do one page; stop
+                pageToken = null;
             }
-            catch (Exception ex)
-            {
-                TouchSchedule(src, ok: false);
-                src.ErrorCount += 1;
-                src.LastError = Truncate(ex.Message, 800);
-                _logger.LogWarning(ex, "YT: source failed source={Name}", src.Name);
-            }
+
+            TouchScheduleOk(src);
+            src.ErrorCount = 0;
+            src.LastError = null;
+            src.Cursor = null;
+
+            _logger.LogInformation("YT: finished source={Name} added={Added}", src.Name, totalAdded);
         }
 
-        private void TouchSchedule(NewsSource src, bool ok)
+        private void TouchScheduleOk(NewsSource src)
         {
             var now = DateTimeOffset.UtcNow;
-
             src.LastFetchedAt = now;
             src.UpdatedAt = now;
 
@@ -421,18 +304,38 @@ namespace TechNewsWorker.Services
                     ? src.FetchIntervalSeconds
                     : Math.Max(1, src.FetchIntervalMinutes) * 60;
 
-            if (!ok)
-            {
-                var backoffSeconds = Math.Min(
-                    intervalSeconds * Math.Max(2, src.ErrorCount + 1),
-                    12 * 60 * 60);
+            src.NextFetchAt = now.AddSeconds(intervalSeconds);
+        }
 
-                src.NextFetchAt = now.AddSeconds(backoffSeconds);
-            }
-            else
-            {
-                src.NextFetchAt = now.AddSeconds(intervalSeconds);
-            }
+        private void TouchScheduleFail(NewsSource src, string err)
+        {
+            var now = DateTimeOffset.UtcNow;
+            src.LastFetchedAt = now;
+            src.UpdatedAt = now;
+
+            src.ErrorCount += 1;
+            src.LastError = Truncate(err, 800);
+
+            var intervalSeconds =
+                src.FetchIntervalSeconds > 0
+                    ? src.FetchIntervalSeconds
+                    : Math.Max(1, src.FetchIntervalMinutes) * 60;
+
+            // modest backoff
+            var backoffSeconds = Math.Min(intervalSeconds * Math.Max(2, src.ErrorCount), 60 * 30); // max 30 min
+            src.NextFetchAt = now.AddSeconds(backoffSeconds);
+        }
+
+        private void TouchQuotaCooldown(NewsSource src, string err)
+        {
+            var now = DateTimeOffset.UtcNow;
+            src.LastFetchedAt = now;
+            src.UpdatedAt = now;
+
+            // don't snowball error count on quota
+            src.LastError = err;
+
+            src.NextFetchAt = now.AddMinutes(Math.Max(10, _yt.QuotaCooldownMinutes));
         }
 
         private static DateTime? ParseYouTubeDate(string? s)
@@ -468,11 +371,7 @@ namespace TechNewsWorker.Services
                 return string.IsNullOrWhiteSpace(url) ? null : url.Trim();
             }
 
-            return Get(thumbs, "maxres")
-                   ?? Get(thumbs, "standard")
-                   ?? Get(thumbs, "high")
-                   ?? Get(thumbs, "medium")
-                   ?? Get(thumbs, "default");
+            return Get(thumbs, "high") ?? Get(thumbs, "medium") ?? Get(thumbs, "default");
         }
 
         private static string? CleanText(string? text)
@@ -498,11 +397,11 @@ namespace TechNewsWorker.Services
 
             using var resp = await http.GetAsync(url, ct);
 
-            if (resp.StatusCode == (HttpStatusCode)429)
-                throw new Exception("YouTube rate limited (429) while resolving uploads playlist.");
-
             if (!resp.IsSuccessStatusCode)
-                await ThrowWithBody(resp, "YouTube channels.list failed", ct);
+            {
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                throw new Exception($"YouTube channels.list failed HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} :: {body}");
+            }
 
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
@@ -523,12 +422,6 @@ namespace TechNewsWorker.Services
                 .GetString();
 
             return string.IsNullOrWhiteSpace(uploads) ? null : uploads.Trim();
-        }
-
-        private async Task ThrowWithBody(HttpResponseMessage resp, string context, CancellationToken ct)
-        {
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            throw new Exception($"{context}: HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} :: {body}");
         }
     }
 }
