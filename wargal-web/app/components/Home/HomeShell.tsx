@@ -1,10 +1,10 @@
 // ==============================
 // File: wargal-web/app/components/Home/HomeShell.tsx
-// ✅ RULE ENFORCED:
-//    - Global sections show ONLY items whose source category == "News"
-//      (Breaking slideshow, Highlights, Latest, More Stories, All News)
-//    - Non-News categories (Sports/Politics/etc) show ONLY in Category sections
-// ✅ Still keeps Sources filtering (by category + selected sources)
+// ✅ UPDATED (FIX):
+//    - The dropdown you were clicking (Breaking header) was hard-locked to "News".
+//    - Now Breaking/Highlights/Latest/More/All News are controlled by a REAL selected category.
+//    - Sources panel still filters sources by category + selected sources.
+//    - Category lanes show everything EXCEPT the currently selected global category.
 // ✅ Auto-refresh merges newest items on top (1 min + tab-return refresh)
 // ✅ “time ago” updates every 60s + on refresh
 // ==============================
@@ -76,8 +76,8 @@ function safeUrl(u?: string | null) {
 
 function keyOf(it?: NewsItem | null) {
   if (!it) return "";
-  const u = clean(it.url);
-  return u ? `u:${u}` : `id:${clean(it.id)}`;
+  const u = clean((it as any)?.url);
+  return u ? `u:${u}` : `id:${clean((it as any)?.id)}`;
 }
 
 function mergeTop(prev: NewsItem[], next: NewsItem[]) {
@@ -126,9 +126,9 @@ function extractYoutubeId(url: string): string | null {
 }
 
 function pickThumb(it?: NewsItem | null) {
-  const img = clean(it?.imageUrl);
+  const img = clean((it as any)?.imageUrl);
   if (img) return img;
-  const icon = clean(it?.sourceIconUrl);
+  const icon = clean((it as any)?.sourceIconUrl);
   if (icon) return icon;
   return "/placeholder-news.jpg";
 }
@@ -332,7 +332,7 @@ function SourcesPanel({
 
       <Box sx={{ flex: 1, overflow: "auto", p: 1 }}>
         {filteredSources.map((s) => {
-          const id = String(s.id);
+          const id = String((s as any).id);
           const checked = selectedSet.has(id);
 
           return (
@@ -350,16 +350,16 @@ function SourcesPanel({
               }}
               onClick={() => toggleSource(id)}
             >
-              <Avatar src={s.iconUrl ?? undefined} sx={{ width: 26, height: 26 }}>
-                {(clean(s.name)?.[0] ?? "S").toUpperCase()}
+              <Avatar src={(s as any).iconUrl ?? undefined} sx={{ width: 26, height: 26 }}>
+                {(clean((s as any).name)?.[0] ?? "S").toUpperCase()}
               </Avatar>
 
               <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Typography fontWeight={800} fontSize={13} noWrap>
-                  {clean(s.name) || "Source"}
+                  {clean((s as any).name) || "Source"}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" noWrap>
-                  {clean(s.category) || "News"}
+                  {clean((s as any).category) || "News"}
                 </Typography>
               </Box>
 
@@ -378,18 +378,17 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
   const [allItems, setAllItems] = useState<NewsItem[]>((items ?? []).filter(Boolean));
   const [allSources, setAllSources] = useState<NewsSource[]>(
-    (sources ?? []).filter(Boolean).filter((s) => s.isActive !== false)
+    (sources ?? []).filter(Boolean).filter((s) => (s as any).isActive !== false)
   );
 
   const [q, setQ] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sourceCategory, setSourceCategory] = useState<string>("All");
 
-  // ✅ Global sections are ALWAYS News-only
-  const GLOBAL_CATEGORY = "News";
+  // ✅ Global sections are controlled by a REAL selected category (default "News")
+  const DEFAULT_GLOBAL_CATEGORY = "News";
+  const [globalCategory, setGlobalCategory] = useState<string>(DEFAULT_GLOBAL_CATEGORY);
 
-  // keep UI chip + menu style, but locked to "News"
-  const [breakingCategory] = useState<string>(GLOBAL_CATEGORY);
   const [breakingAnchor, setBreakingAnchor] = useState<null | HTMLElement>(null);
 
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -406,35 +405,95 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const [mobileRelatedOpen, setMobileRelatedOpen] = useState(false);
   useEffect(() => {
     if (isMobile) setMobileRelatedOpen(false);
-  }, [openItem?.id, openItem?.url, isMobile]);
+  }, [openItem?.id, (openItem as any)?.url, isMobile]);
 
   useEffect(() => {
     const id = setInterval(() => setNowTick(Date.now()), 60 * 1000);
     return () => clearInterval(id);
   }, []);
 
+  // ✅ Robust category resolver:
+  // 1) categoryBySourceId (authoritative if present)
+  // 2) sources list
+  // 3) fallback "News"
+const getCategoryForSource = (sourceId?: string | null) => {
+  const sid = String(sourceId ?? "");
+  const fromMap = clean(categoryBySourceId?.[sid]);
+  if (fromMap) return fromMap;
+
+  const src = (allSources ?? []).find((s) => String((s as any).id) === sid);
+  const fromSource = clean((src as any)?.category);
+  return fromSource || "News";
+};
+
   const selectedSet = useMemo(() => new Set((selectedIds ?? []).map(String)), [selectedIds]);
   const isAllSources = selectedIds.length === 0;
   const isSingleSource = selectedIds.length === 1;
 
+  // ✅ Build category list for BOTH menus:
+  // - SourcesPanel menu includes "All"
+  // - Breaking menu uses same list but excludes "All"
+  const sourceCategories = useMemo(() => {
+    const set = new Set<string>();
+
+    for (const sid of Object.keys(categoryBySourceId ?? {})) {
+      const c = clean(categoryBySourceId?.[sid]);
+      if (c) set.add(c);
+    }
+
+    for (const s of allSources ?? []) {
+      const c = clean((s as any)?.category);
+      if (c) set.add(c);
+    }
+
+    set.add("News");
+
+    const list = Array.from(set).sort((a, b) => a.localeCompare(b));
+    return ["All", ...list];
+  }, [allSources, categoryBySourceId]);
+
+  useEffect(() => {
+    if (!sourceCategories.includes(sourceCategory)) setSourceCategory("All");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceCategories.join("|")]);
+
+  // ✅ Also keep globalCategory valid (in case data changes)
+  useEffect(() => {
+    const globals = sourceCategories.filter((c) => c !== "All");
+    if (!globals.includes(globalCategory)) {
+      setGlobalCategory(globals.includes(DEFAULT_GLOBAL_CATEGORY) ? DEFAULT_GLOBAL_CATEGORY : (globals[0] || "News"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceCategories.join("|")]);
+
   // ✅ Sources-side category (in SourcesPanel) -> determines which source IDs are allowed
   const allowedSourceIdSet = useMemo(() => {
     if (sourceCategory === "All") return null;
+
     const set = new Set<string>();
     for (const s of allSources ?? []) {
-      const cat = clean(s?.category) || "News";
-      if (cat === sourceCategory) set.add(String(s?.id ?? ""));
+      const sid = String((s as any)?.id ?? "");
+      if (!sid) continue;
+
+      const cat = getCategoryForSource(sid);
+      if (cat === sourceCategory) set.add(sid);
     }
+
     return set;
-  }, [allSources, sourceCategory]);
+  }, [allSources, sourceCategory, categoryBySourceId]);
 
-  // ✅ helper: category per sourceId (default to "News" to avoid hiding uncategorized sources)
-  const getSrcCategory = (sourceId?: string | null) => {
-    const c = clean(categoryBySourceId[String(sourceId ?? "")]);
-    return c || "News";
-  };
+  const filteredSources = useMemo(() => {
+    const query = clean(q).toLowerCase();
+    const list = (allSources ?? []).filter(Boolean);
 
-  const isGlobalNewsItem = (it: NewsItem) => getSrcCategory(it?.sourceId) === GLOBAL_CATEGORY;
+    const byCat =
+      sourceCategory === "All"
+        ? list
+        : list.filter((s) => getCategoryForSource(String((s as any).id)) === sourceCategory);
+
+    if (!query) return byCat;
+    return byCat.filter((s) => clean((s as any).name).toLowerCase().includes(query));
+  }, [allSources, q, sourceCategory, categoryBySourceId]);
 
   // ✅ Auto refresh (1 minute) + tab-return refresh
   useEffect(() => {
@@ -459,7 +518,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
         if (!alive) return;
 
         if (src) {
-          setAllSources((src ?? []).filter(Boolean).filter((s) => s.isActive !== false));
+          setAllSources((src ?? []).filter(Boolean).filter((s) => (s as any).isActive !== false));
         }
 
         setAllItems((prev) => mergeTop(prev ?? [], (feed ?? []).filter(Boolean)));
@@ -492,41 +551,13 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     };
   }, []);
 
-  const sourceCategories = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of allSources ?? []) {
-      const c = clean(s?.category) || "News";
-      set.add(c);
-    }
-    const list = Array.from(set).sort((a, b) => a.localeCompare(b));
-    return ["All", ...list];
-  }, [allSources]);
-
-  useEffect(() => {
-    if (!sourceCategories.includes(sourceCategory)) setSourceCategory("All");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceCategories.join("|")]);
-
-  const filteredSources = useMemo(() => {
-    const query = clean(q).toLowerCase();
-    const list = (allSources ?? []).filter(Boolean);
-
-    const byCat =
-      sourceCategory === "All"
-        ? list
-        : list.filter((s) => (clean(s.category) || "News") === sourceCategory);
-
-    if (!query) return byCat;
-    return byCat.filter((s) => clean(s.name).toLowerCase().includes(query));
-  }, [allSources, q, sourceCategory]);
-
   // ✅ Step 1: apply Sources filters to items (sourceCategory + selectedIds)
   const itemsAfterSourceFilters = useMemo(() => {
     const list = (allItems ?? []).filter(Boolean);
 
     const inAllowedSourceCategory = (it: NewsItem) => {
       if (!allowedSourceIdSet) return true;
-      const sid = clean(it?.sourceId);
+      const sid = clean((it as any)?.sourceId);
       if (!sid) return false;
       return allowedSourceIdSet.has(String(sid));
     };
@@ -534,7 +565,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     if (isAllSources) return list.filter(inAllowedSourceCategory);
 
     return list.filter((it) => {
-      const sid = clean(it?.sourceId);
+      const sid = clean((it as any)?.sourceId);
       if (!sid) return false;
       if (!selectedSet.has(String(sid))) return false;
       return inAllowedSourceCategory(it);
@@ -544,27 +575,25 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   // ✅ Step 2: sort newest-first (all categories)
   const sortedAll = useMemo(() => {
     const list = [...itemsAfterSourceFilters];
-    list.sort((a, b) => clean(b?.publishedAt).localeCompare(clean(a?.publishedAt)));
+    list.sort((a, b) => clean((b as any)?.publishedAt).localeCompare(clean((a as any)?.publishedAt)));
     return list;
   }, [itemsAfterSourceFilters]);
 
-  // ✅ Global feed universe (News-only)
-  const sortedNewsOnly = useMemo(() => {
-    return sortedAll.filter((it) => isGlobalNewsItem(it));
-  }, [sortedAll]);
+  // ✅ Global universe = ONLY the selected globalCategory
+  const sortedGlobalOnly = useMemo(() => {
+    return sortedAll.filter((it) => getCategoryForSource((it as any)?.sourceId) === globalCategory);
+  }, [sortedAll, globalCategory, categoryBySourceId, allSources]);
 
-  // ✅ Category lanes should show NON-News items (plus you can choose to also show News in lanes if you want)
-  // Requirement: non-News must appear in category section even if new.
-  // We'll prioritize lanes for non-News only (clean separation).
+  // ✅ Category lanes show everything EXCEPT the selected global category
   const lanesItems = useMemo(() => {
-    return sortedAll.filter((it) => getSrcCategory(it?.sourceId) !== GLOBAL_CATEGORY);
-  }, [sortedAll]);
+    return sortedAll.filter((it) => getCategoryForSource((it as any)?.sourceId) !== globalCategory);
+  }, [sortedAll, globalCategory, categoryBySourceId, allSources]);
 
-  // ✅ NOW every GLOBAL section uses sortedNewsOnly
+  // ✅ NOW every GLOBAL section uses sortedGlobalOnly
   const breakingItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
-    for (const it of sortedNewsOnly) {
+    for (const it of sortedGlobalOnly) {
       const k = keyOf(it);
       if (!k || seen.has(k)) continue;
       seen.add(k);
@@ -572,14 +601,14 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
       if (out.length >= 6) break;
     }
     return out;
-  }, [sortedNewsOnly]);
+  }, [sortedGlobalOnly]);
 
   const highlightItems = useMemo(() => breakingItems.slice(0, 6), [breakingItems]);
 
   const latestItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
-    for (const it of sortedNewsOnly) {
+    for (const it of sortedGlobalOnly) {
       const k = keyOf(it);
       if (!k || seen.has(k)) continue;
       seen.add(k);
@@ -587,17 +616,17 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
       if (out.length >= 7) break;
     }
     return out;
-  }, [sortedNewsOnly]);
+  }, [sortedGlobalOnly]);
 
-  const moreStories = useMemo(() => sortedNewsOnly.slice(6, 30), [sortedNewsOnly]);
+  const moreStories = useMemo(() => sortedGlobalOnly.slice(6, 30), [sortedGlobalOnly]);
 
-  // ✅ All News grid initial items = News-only feed
-  const allNewsInitial = useMemo(() => sortedNewsOnly, [sortedNewsOnly]);
+  // ✅ All News grid initial items = global category feed
+  const allNewsInitial = useMemo(() => sortedGlobalOnly, [sortedGlobalOnly]);
 
   const emptySingleSource =
     isSingleSource &&
     itemsAfterSourceFilters.length > 0 &&
-    sortedNewsOnly.length === 0 &&
+    sortedGlobalOnly.length === 0 &&
     lanesItems.length === 0;
 
   const toggleSource = (id: string) => {
@@ -616,11 +645,11 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
   const closeModal = () => setOpenItem(null);
 
-  const modalUrl = useMemo(() => safeUrl(openItem?.url), [openItem]);
-  const isVideo = openItem?.kind === 2;
+  const modalUrl = useMemo(() => safeUrl((openItem as any)?.url), [openItem]);
+  const isVideo = (openItem as any)?.kind === 2;
 
   const ytId = useMemo(() => {
-    const url = safeUrl(openItem?.url);
+    const url = safeUrl((openItem as any)?.url);
     if (!url) return null;
     return extractYoutubeId(url);
   }, [openItem]);
@@ -633,33 +662,33 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const relatedVideos = useMemo(() => {
     if (!openItem) return [] as NewsItem[];
 
-    const baseTitle = clean(openItem?.title);
+    const baseTitle = clean((openItem as any)?.title);
     const baseTokens = tokenizeTitle(baseTitle);
 
-    const baseUrl = clean(openItem?.url);
-    const baseId = clean(openItem?.id);
+    const baseUrl = clean((openItem as any)?.url);
+    const baseId = clean((openItem as any)?.id);
 
-    // ✅ related search stays within the same "News-only" universe (prevents sports/politics videos from mixing)
-    const candidates = (sortedNewsOnly ?? [])
+    // ✅ related search stays within the selected global category universe
+    const candidates = (sortedGlobalOnly ?? [])
       .filter(Boolean)
-      .filter((it) => it?.kind === 2)
-      .filter((it) => safeUrl(it?.url))
+      .filter((it) => (it as any)?.kind === 2)
+      .filter((it) => safeUrl((it as any)?.url))
       .filter((it) => {
-        if (baseId && clean(it?.id) === baseId) return false;
-        if (baseUrl && clean(it?.url) === baseUrl) return false;
+        if (baseId && clean((it as any)?.id) === baseId) return false;
+        if (baseUrl && clean((it as any)?.url) === baseUrl) return false;
         return true;
       });
 
     const scored = candidates
       .map((it) => {
-        const candTitle = clean(it?.title);
+        const candTitle = clean((it as any)?.title);
         const candTokens = tokenizeTitle(candTitle);
 
         const baseScore = scoreMatch(baseTokens, candTokens);
         if (baseScore <= 0) return null;
 
         const sameSource =
-          clean(String(it?.sourceId ?? "")) === clean(String(openItem?.sourceId ?? ""));
+          clean(String((it as any)?.sourceId ?? "")) === clean(String((openItem as any)?.sourceId ?? ""));
         const score = baseScore + (sameSource ? 0.08 : 0);
 
         if (baseScore < 0.22 && !sameSource) return null;
@@ -674,7 +703,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     const seen = new Set<string>();
 
     for (const x of scored) {
-      const k = clean(x.it?.id) || clean(x.it?.url);
+      const k = clean((x.it as any)?.id) || clean((x.it as any)?.url);
       if (!k || seen.has(k)) continue;
       seen.add(k);
       out.push(x.it);
@@ -682,7 +711,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     }
 
     return out;
-  }, [openItem, sortedNewsOnly]);
+  }, [openItem, sortedGlobalOnly]);
 
   // ✅ Article embed-block detection
   const articleIframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -692,7 +721,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   useEffect(() => {
     setArticleEmbedBlocked(false);
     setArticleIframeReady(false);
-  }, [openItem?.id, openItem?.url]);
+  }, [(openItem as any)?.id, (openItem as any)?.url]);
 
   const isBlockedHref = (h: string) => {
     const s = String(h || "");
@@ -757,7 +786,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
         >
           <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
             {sourceCategory === "All" ? "All categories" : sourceCategory} ·{" "}
-            {isAllSources ? "All sources" : `${selectedIds.length} selected`} · {GLOBAL_CATEGORY}
+            {isAllSources ? "All sources" : `${selectedIds.length} selected`} · {globalCategory}
           </Typography>
 
           <Box sx={{ flex: 1 }} />
@@ -883,14 +912,14 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
               </Box>
             ) : (
               <>
-                {/* Breaking header (locked to News) */}
+                {/* Breaking header (NOW real category selector) */}
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
                   <Typography variant="h6" fontWeight={900} sx={{ lineHeight: 1 }}>
                     Breaking
                   </Typography>
 
                   <Chip
-                    label={breakingCategory}
+                    label={globalCategory}
                     size="small"
                     variant="filled"
                     sx={{ fontWeight: 900, borderRadius: 999 }}
@@ -898,11 +927,10 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
 
                   <Box sx={{ flex: 1 }} />
 
-                  {/* keep icon/menu for UI consistency, but it only contains "News" */}
                   <IconButton
                     onClick={openBreakingMenu}
                     size="small"
-                    aria-label="Category locked to News"
+                    aria-label="Open category menu"
                     sx={{
                       border: "1px solid",
                       borderColor: "divider",
@@ -921,9 +949,24 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                     transformOrigin={{ vertical: "top", horizontal: "right" }}
                     PaperProps={{ sx: { minWidth: 220, borderRadius: 2 } }}
                   >
-                    <MenuItem selected sx={{ fontWeight: 900 }}>
-                      {GLOBAL_CATEGORY}
-                    </MenuItem>
+                    {sourceCategories
+                      .filter((c) => c !== "All")
+                      .map((cat) => {
+                        const active = cat === globalCategory;
+                        return (
+                          <MenuItem
+                            key={cat}
+                            selected={active}
+                            onClick={() => {
+                              setGlobalCategory(cat);
+                              closeBreakingMenu();
+                            }}
+                            sx={{ fontWeight: active ? 900 : 700 }}
+                          >
+                            {cat}
+                          </MenuItem>
+                        );
+                      })}
                   </Menu>
                 </Box>
 
@@ -950,7 +993,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                 </Typography>
                 <CategoryLanes
                   items={lanesItems}
-                  getCategory={(sourceId?: string) => getSrcCategory(String(sourceId ?? ""))}
+                  getCategory={(sourceId?: string) => getCategoryForSource(String(sourceId ?? ""))}
                   onOpen={(it) => onOpen(it)}
                 />
 
@@ -961,8 +1004,8 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                   selectedSourceIds={selectedIds}
                   initialItems={allNewsInitial}
                   pageSize={60}
-                  selectedCategory={GLOBAL_CATEGORY}
-                  getCategory={(sourceId) => getSrcCategory(String(sourceId ?? ""))}
+                  selectedCategory={globalCategory}
+                  getCategory={(sourceId) => getCategoryForSource(String(sourceId ?? ""))}
                 />
               </>
             )}
@@ -1011,7 +1054,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
         <DialogTitle sx={{ fontWeight: 950, pr: 6, px: { xs: 2, sm: 3 } }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Typography fontWeight={950} sx={{ flex: 1, minWidth: 0 }} noWrap>
-              {clean(openItem?.title) || "Read"}
+              {clean((openItem as any)?.title) || "Read"}
             </Typography>
             <IconButton onClick={closeModal} aria-label="Close reader">
               <CloseIcon />
@@ -1019,20 +1062,20 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
           </Box>
 
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-            <Avatar src={openItem?.sourceIconUrl ?? undefined} sx={{ width: 22, height: 22 }}>
-              {(clean(openItem?.sourceName)?.[0] ?? "S").toUpperCase()}
+            <Avatar src={(openItem as any)?.sourceIconUrl ?? undefined} sx={{ width: 22, height: 22 }}>
+              {(clean((openItem as any)?.sourceName)?.[0] ?? "S").toUpperCase()}
             </Avatar>
 
             <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
-              {clean(openItem?.sourceName) || "Source"}
+              {clean((openItem as any)?.sourceName) || "Source"}
             </Typography>
 
             <Box sx={{ flex: 1 }} />
 
-            {!!clean(openItem?.publishedAt) && (
+            {!!clean((openItem as any)?.publishedAt) && (
               <TimeAgo
-                key={`${clean(openItem?.id) || clean(openItem?.url)}-${nowTick}`}
-                iso={openItem?.publishedAt}
+                key={`${clean((openItem as any)?.id) || clean((openItem as any)?.url)}-${nowTick}`}
+                iso={(openItem as any)?.publishedAt}
                 variant="caption"
                 sx={{ color: "text.secondary", fontWeight: 900 }}
               />
@@ -1054,11 +1097,13 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
               </Typography>
 
               <Box sx={{ mt: 2, display: "flex", gap: 1, flexWrap: "wrap" }}>
-                {!!clean(openItem?.url) && (
+                {!!clean((openItem as any)?.url) && (
                   <Button
                     variant="contained"
                     startIcon={<OpenInNewIcon />}
-                    onClick={() => window.open(clean(openItem?.url)!, "_blank", "noopener,noreferrer")}
+                    onClick={() =>
+                      window.open(clean((openItem as any)?.url)!, "_blank", "noopener,noreferrer")
+                    }
                     sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
                   >
                     Open in new tab
@@ -1117,288 +1162,285 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                   )}
                 </Box>
 
-                {/* small screens related */}
-          {/* small screens related (LIGHT GREY) */}
-<Box
-  sx={{
-    display: { xs: "block", md: "none" },
-    bgcolor: "#f5f7fb", // ✅ light grey
-    borderTop: "1px solid",
-    borderColor: "divider",
-  }}
->
-  <Box
-    onClick={() => relatedVideos.length && setMobileRelatedOpen((v) => !v)}
-    sx={{
-      px: 2,
-      py: 1.25,
-      display: "flex",
-      alignItems: "center",
-      gap: 1,
-      cursor: relatedVideos.length ? "pointer" : "default",
-      userSelect: "none",
-      color: "text.primary",
-    }}
-  >
-    <Typography fontWeight={950} sx={{ flex: 1 }}>
-      Related videos{relatedVideos.length ? ` (${Math.min(3, relatedVideos.length)})` : ""}
-    </Typography>
-
-    {relatedVideos.length ? (
-      <IconButton
-        size="small"
-        aria-label="Toggle related videos"
-        onClick={(e) => {
-          e.stopPropagation();
-          setMobileRelatedOpen((v) => !v);
-        }}
-        sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          bgcolor: "common.white",
-          "&:hover": { bgcolor: "grey.50" },
-        }}
-      >
-        {mobileRelatedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-      </IconButton>
-    ) : null}
-  </Box>
-
-  <Collapse in={mobileRelatedOpen} timeout={200} unmountOnExit>
-    <Box sx={{ px: 2, pb: 1.5 }}>
-      {relatedVideos.length === 0 ? (
-        <Typography variant="caption" sx={{ color: "text.secondary" }}>
-          No related videos found for this title yet.
-        </Typography>
-      ) : (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {relatedVideos.slice(0, 3).map((rv, i) => {
-            const title = clean(rv?.title) || "Video";
-            const src = clean(rv?.sourceName) || "Source";
-            const thumb = pickThumb(rv);
-            const openUrl = safeUrl(rv?.url);
-
-            return (
-              <Box
-                key={clean(rv?.id) || clean(rv?.url) || `${i}`}
-                onClick={() => setOpenItem(rv)}
-                sx={{
-                  display: "flex",
-                  gap: 1,
-                  alignItems: "center",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 2,
-                  p: 1,
-                  cursor: "pointer",
-                  bgcolor: "common.white",
-                  transition: "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
-                  "&:hover": { bgcolor: "grey.50", boxShadow: 2, transform: "translateY(-1px)" },
-                  minWidth: 0,
-                }}
-              >
-                <Avatar
-                  src={thumb}
+                {/* small screens related (LIGHT GREY) */}
+                <Box
                   sx={{
-                    width: 34,
-                    height: 34,
-                    flexShrink: 0,
-                    bgcolor: "rgba(0,0,0,0.04)",
-                    border: "1px solid",
+                    display: { xs: "block", md: "none" },
+                    bgcolor: "#f5f7fb",
+                    borderTop: "1px solid",
                     borderColor: "divider",
                   }}
                 >
-                  {(src[0] ?? "V").toUpperCase()}
-                </Avatar>
-
-                <Box sx={{ minWidth: 0, flex: 1 }}>
-                  <Typography fontWeight={950} fontSize={12} noWrap sx={{ color: "text.primary" }}>
-                    {title}
-                  </Typography>
-
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.25 }}>
-                    <Typography variant="caption" noWrap sx={{ color: "text.secondary" }}>
-                      {src}
+                  <Box
+                    onClick={() => relatedVideos.length && setMobileRelatedOpen((v) => !v)}
+                    sx={{
+                      px: 2,
+                      py: 1.25,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      cursor: relatedVideos.length ? "pointer" : "default",
+                      userSelect: "none",
+                      color: "text.primary",
+                    }}
+                  >
+                    <Typography fontWeight={950} sx={{ flex: 1 }}>
+                      Related videos{relatedVideos.length ? ` (${Math.min(3, relatedVideos.length)})` : ""}
                     </Typography>
 
-                    <Box sx={{ flex: 1 }} />
-
-                    {!!clean(rv?.publishedAt) && (
-                      <TimeAgo
-                        key={`${clean(rv?.id) || clean(rv?.url)}-${nowTick}`}
-                        iso={rv?.publishedAt}
-                        variant="caption"
-                        sx={{ color: "text.secondary", fontWeight: 900 }}
-                      />
-                    )}
+                    {relatedVideos.length ? (
+                      <IconButton
+                        size="small"
+                        aria-label="Toggle related videos"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMobileRelatedOpen((v) => !v);
+                        }}
+                        sx={{
+                          border: "1px solid",
+                          borderColor: "divider",
+                          bgcolor: "common.white",
+                          "&:hover": { bgcolor: "grey.50" },
+                        }}
+                      >
+                        {mobileRelatedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                      </IconButton>
+                    ) : null}
                   </Box>
-                </Box>
 
-                <IconButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!openUrl) return;
-                    window.open(openUrl, "_blank", "noopener,noreferrer");
-                  }}
-                  size="small"
-                  aria-label="Open in new tab"
-                  sx={{
-                    flexShrink: 0,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    bgcolor: "common.white",
-                    "&:hover": { bgcolor: "grey.50" },
-                  }}
-                >
-                  <OpenInNewIcon sx={{ fontSize: 18 }} />
-                </IconButton>
-              </Box>
-            );
-          })}
-        </Box>
-      )}
-    </Box>
-  </Collapse>
-</Box>
+                  <Collapse in={mobileRelatedOpen} timeout={200} unmountOnExit>
+                    <Box sx={{ px: 2, pb: 1.5 }}>
+                      {relatedVideos.length === 0 ? (
+                        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                          No related videos found for this title yet.
+                        </Typography>
+                      ) : (
+                        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                          {relatedVideos.slice(0, 3).map((rv, i) => {
+                            const title = clean((rv as any)?.title) || "Video";
+                            const src = clean((rv as any)?.sourceName) || "Source";
+                            const thumb = pickThumb(rv);
+                            const openUrl = safeUrl((rv as any)?.url);
+
+                            return (
+                              <Box
+                                key={clean((rv as any)?.id) || clean((rv as any)?.url) || `${i}`}
+                                onClick={() => setOpenItem(rv)}
+                                sx={{
+                                  display: "flex",
+                                  gap: 1,
+                                  alignItems: "center",
+                                  border: "1px solid",
+                                  borderColor: "divider",
+                                  borderRadius: 2,
+                                  p: 1,
+                                  cursor: "pointer",
+                                  bgcolor: "common.white",
+                                  transition:
+                                    "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
+                                  "&:hover": { bgcolor: "grey.50", boxShadow: 2, transform: "translateY(-1px)" },
+                                  minWidth: 0,
+                                }}
+                              >
+                                <Avatar
+                                  src={thumb}
+                                  sx={{
+                                    width: 34,
+                                    height: 34,
+                                    flexShrink: 0,
+                                    bgcolor: "rgba(0,0,0,0.04)",
+                                    border: "1px solid",
+                                    borderColor: "divider",
+                                  }}
+                                >
+                                  {(src[0] ?? "V").toUpperCase()}
+                                </Avatar>
+
+                                <Box sx={{ minWidth: 0, flex: 1 }}>
+                                  <Typography fontWeight={950} fontSize={12} noWrap sx={{ color: "text.primary" }}>
+                                    {title}
+                                  </Typography>
+
+                                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.25 }}>
+                                    <Typography variant="caption" noWrap sx={{ color: "text.secondary" }}>
+                                      {src}
+                                    </Typography>
+
+                                    <Box sx={{ flex: 1 }} />
+
+                                    {!!clean((rv as any)?.publishedAt) && (
+                                      <TimeAgo
+                                        key={`${clean((rv as any)?.id) || clean((rv as any)?.url)}-${nowTick}`}
+                                        iso={(rv as any)?.publishedAt}
+                                        variant="caption"
+                                        sx={{ color: "text.secondary", fontWeight: 900 }}
+                                      />
+                                    )}
+                                  </Box>
+                                </Box>
+
+                                <IconButton
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!openUrl) return;
+                                    window.open(openUrl, "_blank", "noopener,noreferrer");
+                                  }}
+                                  size="small"
+                                  aria-label="Open in new tab"
+                                  sx={{
+                                    flexShrink: 0,
+                                    border: "1px solid",
+                                    borderColor: "divider",
+                                    bgcolor: "common.white",
+                                    "&:hover": { bgcolor: "grey.50" },
+                                  }}
+                                >
+                                  <OpenInNewIcon sx={{ fontSize: 18 }} />
+                                </IconButton>
+                              </Box>
+                            );
+                          })}
+                        </Box>
+                      )}
+                    </Box>
+                  </Collapse>
+                </Box>
               </Box>
 
               {/* desktop related */}
-         <Box
-  sx={{
-    display: { xs: "none", md: "block" },
-    bgcolor: "#1565C0",
-    borderLeft: "1px solid",
-    borderColor: "divider",
-    height: "100%",
-    color: "white",
-    overflow: "hidden",
-  }}
->
-   <Box
-  sx={{
-    p: 2,
-    bgcolor: "#f5f7fb", // ✅ light grey (no blue)
-    height: "100%",
-    overflow: "auto",
-  }}
->
-  <Typography fontWeight={950} sx={{ mb: 1, color: "text.primary" }}>
-    Related videos
-  </Typography>
-
-  {relatedVideos.length === 0 ? (
-    <Typography variant="caption" sx={{ color: "text.secondary" }}>
-      No related videos found for this title yet.
-    </Typography>
-  ) : (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      {relatedVideos.slice(0, 4).map((rv, i) => {
-        const title = clean(rv?.title) || "Video";
-        const src = clean(rv?.sourceName) || "Source";
-        const thumb = pickThumb(rv);
-        const openUrl = safeUrl(rv?.url);
-
-        return (
-          <Box
-            key={clean(rv?.id) || clean(rv?.url) || `${i}`}
-            onClick={() => setOpenItem(rv)}
-            sx={{
-              display: "flex",
-              gap: 1,
-              alignItems: "center",
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 2,
-              p: 1,
-              cursor: "pointer",
-              bgcolor: "common.white",
-              transition: "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
-              "&:hover": {
-                bgcolor: "grey.50",
-                boxShadow: 2,
-                transform: "translateY(-1px)",
-              },
-              minWidth: 0,
-            }}
-          >
-            {/* Icon/Thumb */}
-            <Avatar
-              src={thumb}
-              sx={{
-                width: 38,
-                height: 38,
-                flexShrink: 0,
-                bgcolor: "rgba(0,0,0,0.04)",
-                border: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              {(src[0] ?? "V").toUpperCase()}
-            </Avatar>
-
-            {/* Title + meta */}
-            <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography
-                fontWeight={950}
-                fontSize={13}
-                noWrap
+              <Box
                 sx={{
-                  color: "text.primary", // ✅ always visible
-                  lineHeight: 1.25,
+                  display: { xs: "none", md: "block" },
+                  bgcolor: "#1565C0",
+                  borderLeft: "1px solid",
+                  borderColor: "divider",
+                  height: "100%",
+                  color: "white",
+                  overflow: "hidden",
                 }}
-                title={title}
               >
-                {title}
-              </Typography>
-
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.25, minWidth: 0 }}>
-                <Typography
-                  variant="caption"
-                  noWrap
-                  sx={{ color: "text.secondary", minWidth: 0 }}
-                  title={src}
+                <Box
+                  sx={{
+                    p: 2,
+                    bgcolor: "#f5f7fb",
+                    height: "100%",
+                    overflow: "auto",
+                  }}
                 >
-                  {src}
-                </Typography>
+                  <Typography fontWeight={950} sx={{ mb: 1, color: "text.primary" }}>
+                    Related videos
+                  </Typography>
 
-                <Box sx={{ flex: 1 }} />
+                  {relatedVideos.length === 0 ? (
+                    <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                      No related videos found for this title yet.
+                    </Typography>
+                  ) : (
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                      {relatedVideos.slice(0, 4).map((rv, i) => {
+                        const title = clean((rv as any)?.title) || "Video";
+                        const src = clean((rv as any)?.sourceName) || "Source";
+                        const thumb = pickThumb(rv);
+                        const openUrl = safeUrl((rv as any)?.url);
 
-                {!!clean(rv?.publishedAt) && (
-                  <TimeAgo
-                    key={`${clean(rv?.id) || clean(rv?.url)}-${nowTick}`}
-                    iso={rv?.publishedAt}
-                    variant="caption"
-                    sx={{ color: "text.secondary", fontWeight: 900, flexShrink: 0 }}
-                  />
-                )}
-              </Box>
-            </Box>
+                        return (
+                          <Box
+                            key={clean((rv as any)?.id) || clean((rv as any)?.url) || `${i}`}
+                            onClick={() => setOpenItem(rv)}
+                            sx={{
+                              display: "flex",
+                              gap: 1,
+                              alignItems: "center",
+                              border: "1px solid",
+                              borderColor: "divider",
+                              borderRadius: 2,
+                              p: 1,
+                              cursor: "pointer",
+                              bgcolor: "common.white",
+                              transition: "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
+                              "&:hover": {
+                                bgcolor: "grey.50",
+                                boxShadow: 2,
+                                transform: "translateY(-1px)",
+                              },
+                              minWidth: 0,
+                            }}
+                          >
+                            <Avatar
+                              src={thumb}
+                              sx={{
+                                width: 38,
+                                height: 38,
+                                flexShrink: 0,
+                                bgcolor: "rgba(0,0,0,0.04)",
+                                border: "1px solid",
+                                borderColor: "divider",
+                              }}
+                            >
+                              {(src[0] ?? "V").toUpperCase()}
+                            </Avatar>
 
-            {/* Open external */}
-            <IconButton
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!openUrl) return;
-                window.open(openUrl, "_blank", "noopener,noreferrer");
-              }}
-              size="small"
-              aria-label="Open in new tab"
-              sx={{
-                flexShrink: 0,
-                border: "1px solid",
-                borderColor: "divider",
-                bgcolor: "common.white",
-                "&:hover": { bgcolor: "grey.50" },
-              }}
-            >
-              <OpenInNewIcon sx={{ fontSize: 18 }} />
-            </IconButton>
-          </Box>
-        );
-      })}
-    </Box>
-  )}
-</Box>
+                            <Box sx={{ minWidth: 0, flex: 1 }}>
+                              <Typography
+                                fontWeight={950}
+                                fontSize={13}
+                                noWrap
+                                sx={{
+                                  color: "text.primary",
+                                  lineHeight: 1.25,
+                                }}
+                                title={title}
+                              >
+                                {title}
+                              </Typography>
+
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.25, minWidth: 0 }}>
+                                <Typography
+                                  variant="caption"
+                                  noWrap
+                                  sx={{ color: "text.secondary", minWidth: 0 }}
+                                  title={src}
+                                >
+                                  {src}
+                                </Typography>
+
+                                <Box sx={{ flex: 1 }} />
+
+                                {!!clean((rv as any)?.publishedAt) && (
+                                  <TimeAgo
+                                    key={`${clean((rv as any)?.id) || clean((rv as any)?.url)}-${nowTick}`}
+                                    iso={(rv as any)?.publishedAt}
+                                    variant="caption"
+                                    sx={{ color: "text.secondary", fontWeight: 900, flexShrink: 0 }}
+                                  />
+                                )}
+                              </Box>
+                            </Box>
+
+                            <IconButton
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!openUrl) return;
+                                window.open(openUrl, "_blank", "noopener,noreferrer");
+                              }}
+                              size="small"
+                              aria-label="Open in new tab"
+                              sx={{
+                                flexShrink: 0,
+                                border: "1px solid",
+                                borderColor: "divider",
+                                bgcolor: "common.white",
+                                "&:hover": { bgcolor: "grey.50" },
+                              }}
+                            >
+                              <OpenInNewIcon sx={{ fontSize: 18 }} />
+                            </IconButton>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  )}
+                </Box>
               </Box>
             </Box>
           ) : (
@@ -1479,9 +1521,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
                     }}
                   />
 
-                  {!articleIframeReady && (
-                    <Box sx={{ position: "absolute", inset: 0, bgcolor: "common.white" }} />
-                  )}
+                  {!articleIframeReady && <Box sx={{ position: "absolute", inset: 0, bgcolor: "common.white" }} />}
                 </Box>
               )}
             </Box>
