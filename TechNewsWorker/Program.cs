@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TechNewsWorker.Data;
@@ -18,9 +19,14 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 Console.WriteLine($"BOOT: Worker starting @ {DateTime.UtcNow:o}");
 
 // Options
-builder.Services.Configure<IngestionOptions>(builder.Configuration.GetSection("Ingestion"));
-builder.Services.Configure<YouTubeOptions>(builder.Configuration.GetSection("YouTube"));
-builder.Services.Configure<RssOptions>(builder.Configuration.GetSection("Rss"));
+builder.Services.Configure<IngestionOptions>(
+    builder.Configuration.GetSection("Ingestion"));
+
+builder.Services.Configure<YouTubeOptions>(
+    builder.Configuration.GetSection("YouTube"));
+
+builder.Services.Configure<RssOptions>(
+    builder.Configuration.GetSection("Rss"));
 
 // Database
 builder.Services.AddDbContext<WorkerDbContext>(opt =>
@@ -32,19 +38,19 @@ builder.Services.AddDbContext<WorkerDbContext>(opt =>
     opt.UseNpgsql(cs);
 });
 
-// Http client
+// Http client (CRITICAL: enable automatic decompression to avoid "invalid character" on gzip/brotli)
 builder.Services.AddHttpClient("ingestion", c =>
 {
+    // Can be overridden by RssOptions.RequestTimeoutSeconds in the service if needed
     c.Timeout = TimeSpan.FromSeconds(30);
-
-    // A more “real” UA helps with some upstreams
-    c.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; WargalNewsWorker/1.0; +https://wargalnews.com)");
-
-    // Prefer XML feeds
-    c.DefaultRequestHeaders.Accept.ParseAdd("application/atom+xml, application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8");
-
-    // Compression
-    c.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip, deflate, br");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("WargalNewsWorker/1.0");
+})
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AutomaticDecompression =
+        DecompressionMethods.GZip |
+        DecompressionMethods.Deflate |
+        DecompressionMethods.Brotli
 });
 
 // Heartbeat
@@ -72,6 +78,7 @@ using (var scope = host.Services.CreateScope())
 }
 
 host.Run();
+
 
 // Heartbeat service
 public sealed class WorkerHeartbeatService : BackgroundService

@@ -1,5 +1,6 @@
 using System.Net;
 using System.ServiceModel.Syndication;
+using System.Text;
 using System.Xml;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -16,9 +17,6 @@ namespace TechNewsWorker.Services
         private readonly ILogger<RssIngestionService> _logger;
         private readonly IngestionOptions _opt;
         private readonly RssOptions _rss;
-
-        private const int ScheduleJitterMaxSeconds = 5;
-        private static readonly int[] TransientRetryDelaysMs = { 500, 1000 };
 
         public RssIngestionService(
             IServiceScopeFactory scopeFactory,
@@ -44,7 +42,9 @@ namespace TechNewsWorker.Services
             await RunOnce(stoppingToken);
 
             while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
                 await RunOnce(stoppingToken);
+            }
         }
 
         private async Task RunOnce(CancellationToken ct)
@@ -63,7 +63,7 @@ namespace TechNewsWorker.Services
                     .Where(s =>
                         s.IsActive &&
                         s.Type == NewsSourceType.RssWebsite &&
-                        !string.IsNullOrWhiteSpace(s.RssUrl) &&
+                        s.RssUrl != null && s.RssUrl != "" &&
                         (s.NextFetchAt == null || s.NextFetchAt <= nowUtc))
                     .OrderBy(s => s.NextFetchAt ?? safeEpochUtc)
                     .Take(_opt.MaxSourcesPerRun)
@@ -103,6 +103,7 @@ namespace TechNewsWorker.Services
             var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
             var http = _httpClientFactory.CreateClient("ingestion");
 
+            // apply RSS options
             http.Timeout = TimeSpan.FromSeconds(Math.Max(5, _rss.RequestTimeoutSeconds));
             if (!string.IsNullOrWhiteSpace(_rss.UserAgent))
             {
@@ -118,11 +119,13 @@ namespace TechNewsWorker.Services
                 await db.SaveChangesAsync(ct);
 
                 var gapSec = (src.NextFetchAt!.Value - src.LastFetchedAt!.Value).TotalSeconds;
-                _logger.LogInformation("RSS[{Run}]: done source={Name} added={Added} gapSec={Gap} next={Next:o} err={Err} lastErr={LastErr}",
+                _logger.LogInformation(
+                    "RSS[{Run}]: done source={Name} added={Added} gapSec={Gap} next={Next:o} err={Err} lastErr={LastErr}",
                     runId, src.Name, added, gapSec, src.NextFetchAt, src.ErrorCount, src.LastError);
             }
             catch (Exception ex)
             {
+                // IMPORTANT: do not crash the whole run — one bad source must not stop others
                 _logger.LogWarning(ex, "RSS[{Run}]: source failed source={Name}", runId, src.Name);
             }
         }
@@ -131,189 +134,172 @@ namespace TechNewsWorker.Services
         {
             if (string.IsNullOrWhiteSpace(src.RssUrl))
             {
-                MarkSuccess(src);
-                ScheduleOk(src);
+                TouchOk(src);
                 return 0;
             }
 
-            var attempt = 0;
-
-            while (true)
+            try
             {
-                ct.ThrowIfCancellationRequested();
+                using var req = new HttpRequestMessage(HttpMethod.Get, src.RssUrl);
 
-                try
+                if (!string.IsNullOrWhiteSpace(src.LastEtag))
+                    req.Headers.TryAddWithoutValidation("If-None-Match", src.LastEtag);
+
+                if (!string.IsNullOrWhiteSpace(src.LastModified))
+                    req.Headers.TryAddWithoutValidation("If-Modified-Since", src.LastModified);
+
+                using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+                if (resp.StatusCode == HttpStatusCode.NotModified)
                 {
-                    using var req = new HttpRequestMessage(HttpMethod.Get, src.RssUrl);
-
-                    if (!string.IsNullOrWhiteSpace(src.LastEtag))
-                        req.Headers.TryAddWithoutValidation("If-None-Match", src.LastEtag);
-
-                    if (!string.IsNullOrWhiteSpace(src.LastModified))
-                        req.Headers.TryAddWithoutValidation("If-Modified-Since", src.LastModified);
-
-                    using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-
-                    if (resp.StatusCode == HttpStatusCode.NotModified)
-                    {
-                        MarkSuccess(src);
-                        ScheduleOk(src);
-                        return 0;
-                    }
-
-                    if (!resp.IsSuccessStatusCode)
-                    {
-                        var body = await SafeReadBody(resp, ct);
-                        var transient = IsTransientHttp(resp.StatusCode);
-
-                        if (transient && attempt < TransientRetryDelaysMs.Length)
-                        {
-                            var delay = TransientRetryDelaysMs[attempt];
-                            attempt++;
-
-                            _logger.LogWarning("RSS transient HTTP {Code} for {Name}. retry {Attempt}/{Max} in {Delay}ms",
-                                (int)resp.StatusCode, src.Name, attempt, TransientRetryDelaysMs.Length, delay);
-
-                            await Task.Delay(delay, ct);
-                            continue;
-                        }
-
-                        if (transient)
-                        {
-                            // Soft transient: don’t store noise, don’t long-backoff.
-                            MarkSoftTransientFailure(src);
-                            ScheduleOk(src);
-                            return 0;
-                        }
-
-                        // Hard failure: store it (real issue)
-                        MarkHardFailure(src, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 300)}");
-                        ScheduleFailShort(src);
-                        return 0;
-                    }
-
-                    if (resp.Headers.ETag != null)
-                        src.LastEtag = resp.Headers.ETag.ToString();
-
-                    if (resp.Content.Headers.LastModified.HasValue)
-                        src.LastModified = resp.Content.Headers.LastModified.Value.ToString("R");
-
-                    await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-                    using var xmlReader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore });
-
-                    var feed = SyndicationFeed.Load(xmlReader);
-                    if (feed == null)
-                    {
-                        MarkSuccess(src);
-                        ScheduleOk(src);
-                        return 0;
-                    }
-
-                    var items = feed.Items
-                        .OrderByDescending(i => i.PublishDate.UtcDateTime == default ? i.LastUpdatedTime.UtcDateTime : i.PublishDate.UtcDateTime)
-                        .Take(Math.Max(1, _opt.MaxItemsPerSource))
-                        .ToList();
-
-                    if (items.Count == 0)
-                    {
-                        MarkSuccess(src);
-                        ScheduleOk(src);
-                        return 0;
-                    }
-
-                    var candidates = new List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author)>();
-
-                    foreach (var it in items)
-                    {
-                        var link = it.Links.FirstOrDefault()?.Uri?.ToString();
-                        var guid = it.Id;
-
-                        var externalId = !string.IsNullOrWhiteSpace(guid)
-                            ? guid.Trim()
-                            : (!string.IsNullOrWhiteSpace(link) ? link.Trim() : $"{src.Id}:{it.Title?.Text}:{it.PublishDate.UtcDateTime:o}");
-
-                        var title = it.Title?.Text?.Trim();
-                        if (string.IsNullOrWhiteSpace(title)) continue;
-
-                        var summary = it.Summary?.Text;
-                        var author = it.Authors.FirstOrDefault()?.Name;
-
-                        var pub = it.PublishDate.UtcDateTime != default
-                            ? it.PublishDate.UtcDateTime
-                            : (it.LastUpdatedTime.UtcDateTime != default ? it.LastUpdatedTime.UtcDateTime : DateTime.UtcNow);
-
-                        candidates.Add((Truncate(externalId, 300)!, title, link, pub, summary, author));
-                    }
-
-                    var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
-
-                    var existing = await db.FeedItems.AsNoTracking()
-                        .Where(x => x.SourceId == src.Id && extIds.Contains(x.ExternalId))
-                        .Select(x => x.ExternalId)
-                        .ToListAsync(ct);
-
-                    var existingSet = existing.Count == 0 ? new HashSet<string>() : new HashSet<string>(existing);
-
-                    var added = 0;
-
-                    foreach (var c in candidates)
-                    {
-                        if (existingSet.Contains(c.ExternalId)) continue;
-
-                        db.FeedItems.Add(new FeedItem
-                        {
-                            Id = Guid.NewGuid(),
-                            SourceId = src.Id,
-                            ExternalId = c.ExternalId,
-                            Kind = FeedItemKind.Article,
-                            Title = Truncate(c.Title, 500),
-                            Summary = Truncate(CleanText(c.Summary), 2000),
-                            LinkUrl = Truncate(c.Link, 1200),
-                            ImageUrl = null,
-                            PublishedAt = c.Published,
-                            ImportedAt = DateTime.UtcNow,
-                            Author = Truncate(c.Author, 200),
-                            IsActive = true,
-                        });
-
-                        added++;
-                    }
-
-                    MarkSuccess(src);
-                    ScheduleOk(src);
-                    return added;
-                }
-                catch (Exception ex)
-                {
-                    var transient = ex is TaskCanceledException || ex is TimeoutException;
-
-                    if (transient && attempt < TransientRetryDelaysMs.Length)
-                    {
-                        var delay = TransientRetryDelaysMs[attempt];
-                        attempt++;
-
-                        _logger.LogWarning(ex, "RSS transient exception for {Name}. retry {Attempt}/{Max} in {Delay}ms",
-                            src.Name, attempt, TransientRetryDelaysMs.Length, delay);
-
-                        await Task.Delay(delay, ct);
-                        continue;
-                    }
-
-                    if (transient)
-                    {
-                        MarkSoftTransientFailure(src);
-                        ScheduleOk(src);
-                        return 0;
-                    }
-
-                    MarkHardFailure(src, ex.Message);
-                    ScheduleFailShort(src);
+                    TouchOk(src);
+                    src.ErrorCount = 0;
+                    src.LastError = null;
                     return 0;
                 }
+
+                if (!resp.IsSuccessStatusCode)
+                {
+                    var body = await resp.Content.ReadAsStringAsync(ct);
+                    TouchFail(src, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 300)}");
+                    return 0;
+                }
+
+                // store caching headers
+                if (resp.Headers.ETag != null)
+                    src.LastEtag = resp.Headers.ETag.ToString();
+
+                if (resp.Content.Headers.LastModified.HasValue)
+                    src.LastModified = resp.Content.Headers.LastModified.Value.ToString("R");
+
+                // Read bytes (safe, allows us to detect non-XML and avoid "invalid character" errors)
+                var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
+
+                if (bytes == null || bytes.Length == 0)
+                {
+                    TouchFail(src, "Empty response body");
+                    return 0;
+                }
+
+                // Remove UTF-8 BOM if present
+                var offset = 0;
+                if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+                    offset = 3;
+
+                // Skip leading whitespace
+                while (offset < bytes.Length && char.IsWhiteSpace((char)bytes[offset]))
+                    offset++;
+
+                // Must look like XML
+                if (offset >= bytes.Length || bytes[offset] != (byte)'<')
+                {
+                    var preview = Encoding.UTF8.GetString(bytes, 0, Math.Min(bytes.Length, 300));
+                    TouchFail(src, $"Non-XML response (not RSS). Preview: {Truncate(preview, 300)}");
+                    return 0;
+                }
+
+                await using var ms = new MemoryStream(bytes);
+                using var xmlReader = XmlReader.Create(ms, new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Ignore
+                });
+
+                var feed = SyndicationFeed.Load(xmlReader);
+                if (feed == null)
+                {
+                    TouchOk(src);
+                    return 0;
+                }
+
+                // parse newest first, take MaxItemsPerSource
+                var items = feed.Items
+                    .OrderByDescending(i =>
+                        i.PublishDate.UtcDateTime == default
+                            ? i.LastUpdatedTime.UtcDateTime
+                            : i.PublishDate.UtcDateTime)
+                    .Take(Math.Max(1, _opt.MaxItemsPerSource))
+                    .ToList();
+
+                if (items.Count == 0)
+                {
+                    TouchOk(src);
+                    return 0;
+                }
+
+                // build candidate external ids (prefer GUID, else LinkUrl, else hash)
+                var candidates = new List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author)>();
+
+                foreach (var it in items)
+                {
+                    var link = it.Links.FirstOrDefault()?.Uri?.ToString();
+                    var guid = it.Id;
+
+                    var externalId = !string.IsNullOrWhiteSpace(guid)
+                        ? guid.Trim()
+                        : (!string.IsNullOrWhiteSpace(link) ? link.Trim() : $"{src.Id}:{it.Title?.Text}:{it.PublishDate.UtcDateTime:o}");
+
+                    var title = it.Title?.Text?.Trim();
+                    if (string.IsNullOrWhiteSpace(title)) continue;
+
+                    var summary = it.Summary?.Text;
+                    var author = it.Authors.FirstOrDefault()?.Name;
+
+                    var pub = it.PublishDate.UtcDateTime != default
+                        ? it.PublishDate.UtcDateTime
+                        : (it.LastUpdatedTime.UtcDateTime != default ? it.LastUpdatedTime.UtcDateTime : DateTime.UtcNow);
+
+                    candidates.Add((Truncate(externalId, 300)!, title, link, pub, summary, author));
+                }
+
+                var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
+
+                var existing = await db.FeedItems.AsNoTracking()
+                    .Where(x => x.SourceId == src.Id && extIds.Contains(x.ExternalId))
+                    .Select(x => x.ExternalId)
+                    .ToListAsync(ct);
+
+                var existingSet = existing.Count == 0 ? new HashSet<string>() : new HashSet<string>(existing);
+
+                var added = 0;
+
+                foreach (var c in candidates)
+                {
+                    if (existingSet.Contains(c.ExternalId)) continue;
+
+                    db.FeedItems.Add(new FeedItem
+                    {
+                        Id = Guid.NewGuid(),
+                        SourceId = src.Id,
+                        ExternalId = c.ExternalId,
+                        Kind = FeedItemKind.Article,
+                        Title = Truncate(c.Title, 500),
+                        Summary = Truncate(CleanText(c.Summary), 2000),
+                        LinkUrl = Truncate(c.Link, 1200),
+                        ImageUrl = null,
+                        PublishedAt = c.Published,
+                        ImportedAt = DateTime.UtcNow,
+                        Author = Truncate(c.Author, 200),
+                        IsActive = true,
+                    });
+
+                    added++;
+                }
+
+                TouchOk(src);
+                src.ErrorCount = 0;
+                src.LastError = null;
+
+                return added;
+            }
+            catch (Exception ex)
+            {
+                // IMPORTANT: record the reason, but keep the worker healthy and running
+                TouchFail(src, ex.Message);
+                return 0;
             }
         }
 
-        private void ScheduleOk(NewsSource src)
+        private void TouchOk(NewsSource src)
         {
             var now = DateTimeOffset.UtcNow;
             src.LastFetchedAt = now;
@@ -324,57 +310,26 @@ namespace TechNewsWorker.Services
                     ? src.FetchIntervalSeconds
                     : Math.Max(1, src.FetchIntervalMinutes) * 60;
 
-            intervalSeconds += Random.Shared.Next(0, ScheduleJitterMaxSeconds + 1);
-            src.NextFetchAt = now.AddSeconds(Math.Max(5, intervalSeconds));
+            src.NextFetchAt = now.AddSeconds(intervalSeconds);
         }
 
-        private void ScheduleFailShort(NewsSource src)
+        private void TouchFail(NewsSource src, string err)
         {
             var now = DateTimeOffset.UtcNow;
             src.LastFetchedAt = now;
             src.UpdatedAt = now;
 
-            var intervalSeconds =
-                src.FetchIntervalSeconds > 0
-                    ? src.FetchIntervalSeconds
-                    : Math.Max(1, src.FetchIntervalMinutes) * 60;
-
-            // Cap 5 minutes max, no 15 minutes.
-            var backoffSeconds = Math.Min(intervalSeconds * Math.Max(2, src.ErrorCount), 60 * 5);
-            src.NextFetchAt = now.AddSeconds(Math.Max(10, backoffSeconds));
-        }
-
-        private static bool IsTransientHttp(HttpStatusCode code)
-        {
-            var c = (int)code;
-            return c == 408 || c == 429 || c == 500 || c == 502 || c == 503 || c == 504;
-        }
-
-        private static void MarkSuccess(NewsSource src)
-        {
-            src.ErrorCount = 0;
-            src.LastError = null;
-        }
-
-        private static void MarkSoftTransientFailure(NewsSource src)
-        {
-            src.ErrorCount = Math.Min(src.ErrorCount + 1, 10);
-            if (src.ErrorCount >= 3)
-                src.LastError = "Transient RSS failures (network/upstream).";
-            else
-                src.LastError = null;
-        }
-
-        private static void MarkHardFailure(NewsSource src, string err)
-        {
-            src.ErrorCount = Math.Min(src.ErrorCount + 1, 50);
+            src.ErrorCount += 1;
             src.LastError = Truncate(err, 800);
-        }
 
-        private static async Task<string> SafeReadBody(HttpResponseMessage resp, CancellationToken ct)
-        {
-            try { return await resp.Content.ReadAsStringAsync(ct); }
-            catch { return string.Empty; }
+            var intervalSeconds =
+                src.FetchIntervalSeconds > 0
+                    ? src.FetchIntervalSeconds
+                    : Math.Max(1, src.FetchIntervalMinutes) * 60;
+
+            // Backoff grows with ErrorCount but caps at 15 minutes (no 30min/6h delays)
+            var backoffSeconds = Math.Min(intervalSeconds * Math.Max(2, src.ErrorCount), 60 * 15);
+            src.NextFetchAt = now.AddSeconds(backoffSeconds);
         }
 
         private static string? CleanText(string? text)
