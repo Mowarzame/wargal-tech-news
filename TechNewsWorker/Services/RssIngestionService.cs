@@ -17,6 +17,9 @@ namespace TechNewsWorker.Services
         private readonly IngestionOptions _opt;
         private readonly RssOptions _rss;
 
+        private const int ScheduleJitterMaxSeconds = 5;
+        private static readonly int[] TransientRetryDelaysMs = { 500, 1000 };
+
         public RssIngestionService(
             IServiceScopeFactory scopeFactory,
             IHttpClientFactory httpClientFactory,
@@ -41,9 +44,7 @@ namespace TechNewsWorker.Services
             await RunOnce(stoppingToken);
 
             while (await timer.WaitForNextTickAsync(stoppingToken))
-            {
                 await RunOnce(stoppingToken);
-            }
         }
 
         private async Task RunOnce(CancellationToken ct)
@@ -62,7 +63,7 @@ namespace TechNewsWorker.Services
                     .Where(s =>
                         s.IsActive &&
                         s.Type == NewsSourceType.RssWebsite &&
-                        s.RssUrl != null && s.RssUrl != "" &&
+                        !string.IsNullOrWhiteSpace(s.RssUrl) &&
                         (s.NextFetchAt == null || s.NextFetchAt <= nowUtc))
                     .OrderBy(s => s.NextFetchAt ?? safeEpochUtc)
                     .Take(_opt.MaxSourcesPerRun)
@@ -102,7 +103,6 @@ namespace TechNewsWorker.Services
             var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
             var http = _httpClientFactory.CreateClient("ingestion");
 
-            // apply RSS options
             http.Timeout = TimeSpan.FromSeconds(Math.Max(5, _rss.RequestTimeoutSeconds));
             if (!string.IsNullOrWhiteSpace(_rss.UserAgent))
             {
@@ -131,168 +131,250 @@ namespace TechNewsWorker.Services
         {
             if (string.IsNullOrWhiteSpace(src.RssUrl))
             {
-                TouchOk(src);
+                MarkSuccess(src);
+                ScheduleOk(src);
                 return 0;
             }
 
-            try
+            var attempt = 0;
+
+            while (true)
             {
-                using var req = new HttpRequestMessage(HttpMethod.Get, src.RssUrl);
+                ct.ThrowIfCancellationRequested();
 
-                if (!string.IsNullOrWhiteSpace(src.LastEtag))
-                    req.Headers.TryAddWithoutValidation("If-None-Match", src.LastEtag);
-
-                if (!string.IsNullOrWhiteSpace(src.LastModified))
-                    req.Headers.TryAddWithoutValidation("If-Modified-Since", src.LastModified);
-
-                using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-
-                if (resp.StatusCode == HttpStatusCode.NotModified)
+                try
                 {
-                    TouchOk(src);
-                    src.ErrorCount = 0;
-                    src.LastError = null;
-                    return 0;
-                }
+                    using var req = new HttpRequestMessage(HttpMethod.Get, src.RssUrl);
 
-                if (!resp.IsSuccessStatusCode)
-                {
-                    var body = await resp.Content.ReadAsStringAsync(ct);
-                    TouchFail(src, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 300)}");
-                    return 0;
-                }
+                    if (!string.IsNullOrWhiteSpace(src.LastEtag))
+                        req.Headers.TryAddWithoutValidation("If-None-Match", src.LastEtag);
 
-                // store caching headers
-                if (resp.Headers.ETag != null)
-                    src.LastEtag = resp.Headers.ETag.ToString();
+                    if (!string.IsNullOrWhiteSpace(src.LastModified))
+                        req.Headers.TryAddWithoutValidation("If-Modified-Since", src.LastModified);
 
-                if (resp.Content.Headers.LastModified.HasValue)
-                    src.LastModified = resp.Content.Headers.LastModified.Value.ToString("R");
+                    using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
 
-                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-                using var xmlReader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore });
-
-                var feed = SyndicationFeed.Load(xmlReader);
-                if (feed == null)
-                {
-                    TouchOk(src);
-                    return 0;
-                }
-
-                // parse newest first, take MaxItemsPerSource
-                var items = feed.Items
-                    .OrderByDescending(i => i.PublishDate.UtcDateTime == default ? i.LastUpdatedTime.UtcDateTime : i.PublishDate.UtcDateTime)
-                    .Take(Math.Max(1, _opt.MaxItemsPerSource))
-                    .ToList();
-
-                if (items.Count == 0)
-                {
-                    TouchOk(src);
-                    return 0;
-                }
-
-                // build candidate external ids (prefer GUID, else LinkUrl, else hash)
-                var candidates = new List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author)>();
-
-                foreach (var it in items)
-                {
-                    var link = it.Links.FirstOrDefault()?.Uri?.ToString();
-                    var guid = it.Id;
-
-                    var externalId = !string.IsNullOrWhiteSpace(guid)
-                        ? guid.Trim()
-                        : (!string.IsNullOrWhiteSpace(link) ? link.Trim() : $"{src.Id}:{it.Title?.Text}:{it.PublishDate.UtcDateTime:o}");
-
-                    var title = it.Title?.Text?.Trim();
-                    if (string.IsNullOrWhiteSpace(title)) continue;
-
-                    var summary = it.Summary?.Text;
-                    var author = it.Authors.FirstOrDefault()?.Name;
-
-                    var pub = it.PublishDate.UtcDateTime != default
-                        ? it.PublishDate.UtcDateTime
-                        : (it.LastUpdatedTime.UtcDateTime != default ? it.LastUpdatedTime.UtcDateTime : DateTime.UtcNow);
-
-                    candidates.Add((Truncate(externalId, 300)!, title, link, pub, summary, author));
-                }
-
-                var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
-
-                var existing = await db.FeedItems.AsNoTracking()
-                    .Where(x => x.SourceId == src.Id && extIds.Contains(x.ExternalId))
-                    .Select(x => x.ExternalId)
-                    .ToListAsync(ct);
-
-                var existingSet = existing.Count == 0 ? new HashSet<string>() : new HashSet<string>(existing);
-
-                var added = 0;
-
-                foreach (var c in candidates)
-                {
-                    if (existingSet.Contains(c.ExternalId)) continue;
-
-                    db.FeedItems.Add(new FeedItem
+                    if (resp.StatusCode == HttpStatusCode.NotModified)
                     {
-                        Id = Guid.NewGuid(),
-                        SourceId = src.Id,
-                        ExternalId = c.ExternalId,
-                        Kind = FeedItemKind.Article,
-                        Title = Truncate(c.Title, 500),
-                        Summary = Truncate(CleanText(c.Summary), 2000),
-                        LinkUrl = Truncate(c.Link, 1200),
-                        ImageUrl = null, // If you later parse og:image, do it in API or separate job
-                        PublishedAt = c.Published,
-                        ImportedAt = DateTime.UtcNow,
-                        Author = Truncate(c.Author, 200),
-                        IsActive = true,
-                    });
+                        MarkSuccess(src);
+                        ScheduleOk(src);
+                        return 0;
+                    }
 
-                    added++;
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        var body = await SafeReadBody(resp, ct);
+                        var transient = IsTransientHttp(resp.StatusCode);
+
+                        if (transient && attempt < TransientRetryDelaysMs.Length)
+                        {
+                            var delay = TransientRetryDelaysMs[attempt];
+                            attempt++;
+
+                            _logger.LogWarning("RSS transient HTTP {Code} for {Name}. retry {Attempt}/{Max} in {Delay}ms",
+                                (int)resp.StatusCode, src.Name, attempt, TransientRetryDelaysMs.Length, delay);
+
+                            await Task.Delay(delay, ct);
+                            continue;
+                        }
+
+                        if (transient)
+                        {
+                            // Soft transient: don’t store noise, don’t long-backoff.
+                            MarkSoftTransientFailure(src);
+                            ScheduleOk(src);
+                            return 0;
+                        }
+
+                        // Hard failure: store it (real issue)
+                        MarkHardFailure(src, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 300)}");
+                        ScheduleFailShort(src);
+                        return 0;
+                    }
+
+                    if (resp.Headers.ETag != null)
+                        src.LastEtag = resp.Headers.ETag.ToString();
+
+                    if (resp.Content.Headers.LastModified.HasValue)
+                        src.LastModified = resp.Content.Headers.LastModified.Value.ToString("R");
+
+                    await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                    using var xmlReader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore });
+
+                    var feed = SyndicationFeed.Load(xmlReader);
+                    if (feed == null)
+                    {
+                        MarkSuccess(src);
+                        ScheduleOk(src);
+                        return 0;
+                    }
+
+                    var items = feed.Items
+                        .OrderByDescending(i => i.PublishDate.UtcDateTime == default ? i.LastUpdatedTime.UtcDateTime : i.PublishDate.UtcDateTime)
+                        .Take(Math.Max(1, _opt.MaxItemsPerSource))
+                        .ToList();
+
+                    if (items.Count == 0)
+                    {
+                        MarkSuccess(src);
+                        ScheduleOk(src);
+                        return 0;
+                    }
+
+                    var candidates = new List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author)>();
+
+                    foreach (var it in items)
+                    {
+                        var link = it.Links.FirstOrDefault()?.Uri?.ToString();
+                        var guid = it.Id;
+
+                        var externalId = !string.IsNullOrWhiteSpace(guid)
+                            ? guid.Trim()
+                            : (!string.IsNullOrWhiteSpace(link) ? link.Trim() : $"{src.Id}:{it.Title?.Text}:{it.PublishDate.UtcDateTime:o}");
+
+                        var title = it.Title?.Text?.Trim();
+                        if (string.IsNullOrWhiteSpace(title)) continue;
+
+                        var summary = it.Summary?.Text;
+                        var author = it.Authors.FirstOrDefault()?.Name;
+
+                        var pub = it.PublishDate.UtcDateTime != default
+                            ? it.PublishDate.UtcDateTime
+                            : (it.LastUpdatedTime.UtcDateTime != default ? it.LastUpdatedTime.UtcDateTime : DateTime.UtcNow);
+
+                        candidates.Add((Truncate(externalId, 300)!, title, link, pub, summary, author));
+                    }
+
+                    var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
+
+                    var existing = await db.FeedItems.AsNoTracking()
+                        .Where(x => x.SourceId == src.Id && extIds.Contains(x.ExternalId))
+                        .Select(x => x.ExternalId)
+                        .ToListAsync(ct);
+
+                    var existingSet = existing.Count == 0 ? new HashSet<string>() : new HashSet<string>(existing);
+
+                    var added = 0;
+
+                    foreach (var c in candidates)
+                    {
+                        if (existingSet.Contains(c.ExternalId)) continue;
+
+                        db.FeedItems.Add(new FeedItem
+                        {
+                            Id = Guid.NewGuid(),
+                            SourceId = src.Id,
+                            ExternalId = c.ExternalId,
+                            Kind = FeedItemKind.Article,
+                            Title = Truncate(c.Title, 500),
+                            Summary = Truncate(CleanText(c.Summary), 2000),
+                            LinkUrl = Truncate(c.Link, 1200),
+                            ImageUrl = null,
+                            PublishedAt = c.Published,
+                            ImportedAt = DateTime.UtcNow,
+                            Author = Truncate(c.Author, 200),
+                            IsActive = true,
+                        });
+
+                        added++;
+                    }
+
+                    MarkSuccess(src);
+                    ScheduleOk(src);
+                    return added;
                 }
+                catch (Exception ex)
+                {
+                    var transient = ex is TaskCanceledException || ex is TimeoutException;
 
-                TouchOk(src);
-                src.ErrorCount = 0;
+                    if (transient && attempt < TransientRetryDelaysMs.Length)
+                    {
+                        var delay = TransientRetryDelaysMs[attempt];
+                        attempt++;
+
+                        _logger.LogWarning(ex, "RSS transient exception for {Name}. retry {Attempt}/{Max} in {Delay}ms",
+                            src.Name, attempt, TransientRetryDelaysMs.Length, delay);
+
+                        await Task.Delay(delay, ct);
+                        continue;
+                    }
+
+                    if (transient)
+                    {
+                        MarkSoftTransientFailure(src);
+                        ScheduleOk(src);
+                        return 0;
+                    }
+
+                    MarkHardFailure(src, ex.Message);
+                    ScheduleFailShort(src);
+                    return 0;
+                }
+            }
+        }
+
+        private void ScheduleOk(NewsSource src)
+        {
+            var now = DateTimeOffset.UtcNow;
+            src.LastFetchedAt = now;
+            src.UpdatedAt = now;
+
+            var intervalSeconds =
+                src.FetchIntervalSeconds > 0
+                    ? src.FetchIntervalSeconds
+                    : Math.Max(1, src.FetchIntervalMinutes) * 60;
+
+            intervalSeconds += Random.Shared.Next(0, ScheduleJitterMaxSeconds + 1);
+            src.NextFetchAt = now.AddSeconds(Math.Max(5, intervalSeconds));
+        }
+
+        private void ScheduleFailShort(NewsSource src)
+        {
+            var now = DateTimeOffset.UtcNow;
+            src.LastFetchedAt = now;
+            src.UpdatedAt = now;
+
+            var intervalSeconds =
+                src.FetchIntervalSeconds > 0
+                    ? src.FetchIntervalSeconds
+                    : Math.Max(1, src.FetchIntervalMinutes) * 60;
+
+            // Cap 5 minutes max, no 15 minutes.
+            var backoffSeconds = Math.Min(intervalSeconds * Math.Max(2, src.ErrorCount), 60 * 5);
+            src.NextFetchAt = now.AddSeconds(Math.Max(10, backoffSeconds));
+        }
+
+        private static bool IsTransientHttp(HttpStatusCode code)
+        {
+            var c = (int)code;
+            return c == 408 || c == 429 || c == 500 || c == 502 || c == 503 || c == 504;
+        }
+
+        private static void MarkSuccess(NewsSource src)
+        {
+            src.ErrorCount = 0;
+            src.LastError = null;
+        }
+
+        private static void MarkSoftTransientFailure(NewsSource src)
+        {
+            src.ErrorCount = Math.Min(src.ErrorCount + 1, 10);
+            if (src.ErrorCount >= 3)
+                src.LastError = "Transient RSS failures (network/upstream).";
+            else
                 src.LastError = null;
-
-                return added;
-            }
-            catch (Exception ex)
-            {
-                TouchFail(src, ex.Message);
-                return 0;
-            }
         }
 
-        private void TouchOk(NewsSource src)
+        private static void MarkHardFailure(NewsSource src, string err)
         {
-            var now = DateTimeOffset.UtcNow;
-            src.LastFetchedAt = now;
-            src.UpdatedAt = now;
-
-            var intervalSeconds =
-                src.FetchIntervalSeconds > 0
-                    ? src.FetchIntervalSeconds
-                    : Math.Max(1, src.FetchIntervalMinutes) * 60;
-
-            src.NextFetchAt = now.AddSeconds(intervalSeconds);
-        }
-
-        private void TouchFail(NewsSource src, string err)
-        {
-            var now = DateTimeOffset.UtcNow;
-            src.LastFetchedAt = now;
-            src.UpdatedAt = now;
-
-            src.ErrorCount += 1;
+            src.ErrorCount = Math.Min(src.ErrorCount + 1, 50);
             src.LastError = Truncate(err, 800);
+        }
 
-            var intervalSeconds =
-                src.FetchIntervalSeconds > 0
-                    ? src.FetchIntervalSeconds
-                    : Math.Max(1, src.FetchIntervalMinutes) * 60;
-
-            var backoffSeconds = Math.Min(intervalSeconds * Math.Max(2, src.ErrorCount), 60 * 15); // max 15 min
-            src.NextFetchAt = now.AddSeconds(backoffSeconds);
+        private static async Task<string> SafeReadBody(HttpResponseMessage resp, CancellationToken ct)
+        {
+            try { return await resp.Content.ReadAsStringAsync(ct); }
+            catch { return string.Empty; }
         }
 
         private static string? CleanText(string? text)
