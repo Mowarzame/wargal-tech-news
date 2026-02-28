@@ -19,14 +19,9 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 Console.WriteLine($"BOOT: Worker starting @ {DateTime.UtcNow:o}");
 
 // Options
-builder.Services.Configure<IngestionOptions>(
-    builder.Configuration.GetSection("Ingestion"));
-
-builder.Services.Configure<YouTubeOptions>(
-    builder.Configuration.GetSection("YouTube"));
-
-builder.Services.Configure<RssOptions>(
-    builder.Configuration.GetSection("Rss"));
+builder.Services.Configure<IngestionOptions>(builder.Configuration.GetSection("Ingestion"));
+builder.Services.Configure<YouTubeOptions>(builder.Configuration.GetSection("YouTube"));
+builder.Services.Configure<RssOptions>(builder.Configuration.GetSection("Rss"));
 
 // Database
 builder.Services.AddDbContext<WorkerDbContext>(opt =>
@@ -38,20 +33,31 @@ builder.Services.AddDbContext<WorkerDbContext>(opt =>
     opt.UseNpgsql(cs);
 });
 
-// Http client (CRITICAL: enable automatic decompression to avoid "invalid character" on gzip/brotli)
-builder.Services.AddHttpClient("ingestion", c =>
+// Shared handler: decompression prevents “Invalid character in encoding” from gzip/br bodies
+static SocketsHttpHandler CreateHandler() => new()
 {
-    // Can be overridden by RssOptions.RequestTimeoutSeconds in the service if needed
-    c.Timeout = TimeSpan.FromSeconds(30);
-    c.DefaultRequestHeaders.UserAgent.ParseAdd("WargalNewsWorker/1.0");
+    AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+};
+
+// RSS http client
+builder.Services.AddHttpClient("rss", (sp, c) =>
+{
+    var rss = sp.GetRequiredService<IOptions<RssOptions>>().Value;
+    c.Timeout = TimeSpan.FromSeconds(Math.Max(5, rss.RequestTimeoutSeconds));
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(rss.UserAgent);
+    c.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8");
 })
-.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+.ConfigurePrimaryHttpMessageHandler(CreateHandler);
+
+// YouTube http client (separate UA + timeout)
+builder.Services.AddHttpClient("youtube", (sp, c) =>
 {
-    AutomaticDecompression =
-        DecompressionMethods.GZip |
-        DecompressionMethods.Deflate |
-        DecompressionMethods.Brotli
-});
+    var yt = sp.GetRequiredService<IOptions<YouTubeOptions>>().Value;
+    c.Timeout = TimeSpan.FromSeconds(Math.Max(5, yt.RequestTimeoutSeconds));
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(yt.UserAgent);
+    c.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/atom+xml, application/xml;q=0.9, */*;q=0.8");
+})
+.ConfigurePrimaryHttpMessageHandler(CreateHandler);
 
 // Heartbeat
 builder.Services.AddHostedService<WorkerHeartbeatService>();
@@ -63,22 +69,22 @@ builder.Services.AddHostedService<InternalPostsIngestionService>();
 
 var host = builder.Build();
 
-// Log actual interval values
+// Log actual values
 using (var scope = host.Services.CreateScope())
 {
     var opt = scope.ServiceProvider.GetRequiredService<IOptions<IngestionOptions>>().Value;
-    var yt  = scope.ServiceProvider.GetRequiredService<IOptions<YouTubeOptions>>().Value;
+    var yt = scope.ServiceProvider.GetRequiredService<IOptions<YouTubeOptions>>().Value;
     var rss = scope.ServiceProvider.GetRequiredService<IOptions<RssOptions>>().Value;
 
     Console.WriteLine(
         $"BOOT: RSS interval={opt.GetRssInterval()} YT interval={opt.GetYouTubeInterval()} " +
         $"MaxSourcesPerRun={opt.MaxSourcesPerRun} MaxItemsPerSource={opt.MaxItemsPerSource} " +
-        $"MaxParallelFetches={opt.MaxParallelFetches} YT.MaxResults={yt.MaxResults} " +
-        $"RSS.TimeoutSec={rss.RequestTimeoutSeconds}");
+        $"MaxParallelFetches={opt.MaxParallelFetches} " +
+        $"YT.MaxSourcesPerRun={yt.MaxSourcesPerRun} YT.MinDelayMs={yt.MinDelayBetweenRequestsMs} " +
+        $"RSS.TimeoutSec={rss.RequestTimeoutSeconds} YT.TimeoutSec={yt.RequestTimeoutSeconds}");
 }
 
 host.Run();
-
 
 // Heartbeat service
 public sealed class WorkerHeartbeatService : BackgroundService

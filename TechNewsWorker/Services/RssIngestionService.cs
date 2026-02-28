@@ -101,15 +101,10 @@ namespace TechNewsWorker.Services
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
-            var http = _httpClientFactory.CreateClient("ingestion");
+            var http = _httpClientFactory.CreateClient("rss");
 
             // apply RSS options
             http.Timeout = TimeSpan.FromSeconds(Math.Max(5, _rss.RequestTimeoutSeconds));
-            if (!string.IsNullOrWhiteSpace(_rss.UserAgent))
-            {
-                http.DefaultRequestHeaders.UserAgent.Clear();
-                http.DefaultRequestHeaders.UserAgent.ParseAdd(_rss.UserAgent);
-            }
 
             var src = await db.NewsSources.FirstAsync(x => x.Id == sourceId, ct);
 
@@ -119,13 +114,11 @@ namespace TechNewsWorker.Services
                 await db.SaveChangesAsync(ct);
 
                 var gapSec = (src.NextFetchAt!.Value - src.LastFetchedAt!.Value).TotalSeconds;
-                _logger.LogInformation(
-                    "RSS[{Run}]: done source={Name} added={Added} gapSec={Gap} next={Next:o} err={Err} lastErr={LastErr}",
+                _logger.LogInformation("RSS[{Run}]: done source={Name} added={Added} gapSec={Gap} next={Next:o} err={Err} lastErr={LastErr}",
                     runId, src.Name, added, gapSec, src.NextFetchAt, src.ErrorCount, src.LastError);
             }
             catch (Exception ex)
             {
-                // IMPORTANT: do not crash the whole run — one bad source must not stop others
                 _logger.LogWarning(ex, "RSS[{Run}]: source failed source={Name}", runId, src.Name);
             }
         }
@@ -160,46 +153,29 @@ namespace TechNewsWorker.Services
 
                 if (!resp.IsSuccessStatusCode)
                 {
-                    var body = await resp.Content.ReadAsStringAsync(ct);
+                    var body = await SafeReadBody(resp, ct);
                     TouchFail(src, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 300)}");
                     return 0;
                 }
 
-                // store caching headers
+                // Guard: non-XML bodies (some sites return HTML/JSON on /api/)
+                var mediaType = resp.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
+                if (mediaType != null && !mediaType.Contains("xml") && !mediaType.Contains("rss") && !mediaType.Contains("atom"))
+                {
+                    var body = await SafeReadBody(resp, ct);
+                    TouchFail(src, $"Non-XML response ({mediaType}). First bytes: {Truncate(body, 150)}");
+                    return 0;
+                }
+
                 if (resp.Headers.ETag != null)
                     src.LastEtag = resp.Headers.ETag.ToString();
 
                 if (resp.Content.Headers.LastModified.HasValue)
                     src.LastModified = resp.Content.Headers.LastModified.Value.ToString("R");
 
-                // Read bytes (safe, allows us to detect non-XML and avoid "invalid character" errors)
-                var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
 
-                if (bytes == null || bytes.Length == 0)
-                {
-                    TouchFail(src, "Empty response body");
-                    return 0;
-                }
-
-                // Remove UTF-8 BOM if present
-                var offset = 0;
-                if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
-                    offset = 3;
-
-                // Skip leading whitespace
-                while (offset < bytes.Length && char.IsWhiteSpace((char)bytes[offset]))
-                    offset++;
-
-                // Must look like XML
-                if (offset >= bytes.Length || bytes[offset] != (byte)'<')
-                {
-                    var preview = Encoding.UTF8.GetString(bytes, 0, Math.Min(bytes.Length, 300));
-                    TouchFail(src, $"Non-XML response (not RSS). Preview: {Truncate(preview, 300)}");
-                    return 0;
-                }
-
-                await using var ms = new MemoryStream(bytes);
-                using var xmlReader = XmlReader.Create(ms, new XmlReaderSettings
+                using var xmlReader = XmlReader.Create(stream, new XmlReaderSettings
                 {
                     DtdProcessing = DtdProcessing.Ignore
                 });
@@ -211,12 +187,8 @@ namespace TechNewsWorker.Services
                     return 0;
                 }
 
-                // parse newest first, take MaxItemsPerSource
                 var items = feed.Items
-                    .OrderByDescending(i =>
-                        i.PublishDate.UtcDateTime == default
-                            ? i.LastUpdatedTime.UtcDateTime
-                            : i.PublishDate.UtcDateTime)
+                    .OrderByDescending(i => i.PublishDate.UtcDateTime == default ? i.LastUpdatedTime.UtcDateTime : i.PublishDate.UtcDateTime)
                     .Take(Math.Max(1, _opt.MaxItemsPerSource))
                     .ToList();
 
@@ -226,7 +198,6 @@ namespace TechNewsWorker.Services
                     return 0;
                 }
 
-                // build candidate external ids (prefer GUID, else LinkUrl, else hash)
                 var candidates = new List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author)>();
 
                 foreach (var it in items)
@@ -293,7 +264,6 @@ namespace TechNewsWorker.Services
             }
             catch (Exception ex)
             {
-                // IMPORTANT: record the reason, but keep the worker healthy and running
                 TouchFail(src, ex.Message);
                 return 0;
             }
@@ -327,9 +297,23 @@ namespace TechNewsWorker.Services
                     ? src.FetchIntervalSeconds
                     : Math.Max(1, src.FetchIntervalMinutes) * 60;
 
-            // Backoff grows with ErrorCount but caps at 15 minutes (no 30min/6h delays)
             var backoffSeconds = Math.Min(intervalSeconds * Math.Max(2, src.ErrorCount), 60 * 15);
             src.NextFetchAt = now.AddSeconds(backoffSeconds);
+        }
+
+        private static async Task<string> SafeReadBody(HttpResponseMessage resp, CancellationToken ct)
+        {
+            try
+            {
+                var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
+                if (bytes.Length == 0) return string.Empty;
+                var take = Math.Min(bytes.Length, 2000);
+                return Encoding.UTF8.GetString(bytes, 0, take);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static string? CleanText(string? text)

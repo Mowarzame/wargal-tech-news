@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Http.Headers;
+using System.Text;
 using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -13,12 +13,11 @@ namespace TechNewsWorker.Services
     /// <summary>
     /// YouTube ingestion via public RSS/Atom feed (NO API KEY, NO QUOTA).
     /// Feed URL: https://www.youtube.com/feeds/videos.xml?channel_id=UCxxxx
-    /// Uses ETag/Last-Modified for conditional GET.
     ///
-    /// IMPORTANT:
-    /// - YouTube/Google sometimes returns transient 404/500 HTML error pages that later disappear.
-    /// - We handle these as TRANSIENT with quick retries and "soft fail" scheduling,
-    ///   so we don't lose items and we don't store noisy errors.
+    /// Anti-block strategy:
+    /// - Global request gate + min delay between requests
+    /// - Content-type + body sniffing to avoid XML parse crashes on HTML/JSON responses
+    /// - Cooldown only on actual throttle / transient edge errors
     /// </summary>
     public sealed class YouTubeIngestionService : BackgroundService
     {
@@ -28,13 +27,7 @@ namespace TechNewsWorker.Services
         private readonly IngestionOptions _opt;
         private readonly YouTubeOptions _yt;
 
-        private const int MaxFetchesPerSourcePerRun = 1;
-        private const int ScheduleJitterMaxSeconds = 10;
-
-        // Quick retry (in-run) for transient upstream issues (NO long backoff)
-        private static readonly int[] TransientRetryDelaysMs = { 750, 1500 };
-
-        // Global pacing (rate-limit friendly)
+        // Global gate to prevent parallel YouTube requests (most important for anti-block)
         private static readonly SemaphoreSlim _requestGate = new(1, 1);
         private static DateTimeOffset _lastRequestUtc = DateTimeOffset.MinValue;
 
@@ -57,15 +50,17 @@ namespace TechNewsWorker.Services
             var interval = _opt.GetYouTubeInterval();
 
             _logger.LogInformation(
-                "YT-RSS: START @ {NowUtc:o} interval={Interval} maxPerRun={MaxPerRun} maxParallel={MaxPar}",
-                DateTimeOffset.UtcNow, interval, _opt.MaxSourcesPerRun, Math.Max(1, _opt.MaxParallelFetches));
+                "YT-RSS: START @ {NowUtc:o} interval={Interval} opt.MaxItemsPerSource={MaxItems} yt.MaxSourcesPerRun={MaxSources} minDelayMs={MinDelay}",
+                DateTimeOffset.UtcNow, interval, _opt.MaxItemsPerSource, _yt.MaxSourcesPerRun, _yt.MinDelayBetweenRequestsMs);
 
             using var timer = new PeriodicTimer(interval);
 
             await RunOnce(stoppingToken);
 
             while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
                 await RunOnce(stoppingToken);
+            }
         }
 
         private async Task RunOnce(CancellationToken ct)
@@ -80,33 +75,34 @@ namespace TechNewsWorker.Services
 
                 var safeEpochUtc = DateTimeOffset.UnixEpoch;
 
+                var maxSources = Math.Max(1, _yt.MaxSourcesPerRun);
+
+                // Only due YT sources
                 var dueIds = await db.NewsSources.AsNoTracking()
                     .Where(s =>
                         s.IsActive &&
                         s.Type == NewsSourceType.YouTubeChannel &&
-                        !string.IsNullOrWhiteSpace(s.YouTubeChannelId) &&
+                        s.YouTubeChannelId != null && s.YouTubeChannelId != "" &&
                         (s.NextFetchAt == null || s.NextFetchAt <= nowUtc))
                     .OrderBy(s => s.NextFetchAt ?? safeEpochUtc)
-                    .Take(_opt.MaxSourcesPerRun)
+                    .Take(maxSources)
                     .Select(s => s.Id)
                     .ToListAsync(ct);
 
-                _logger.LogInformation("YT-RSS[{Run}]: due={Due} nowUtc={Now:o}", runId, dueIds.Count, nowUtc);
+                _logger.LogInformation("YT-RSS[{Run}]: due={Due} picked={Picked} nowUtc={Now:o}",
+                    runId, dueIds.Count, Math.Min(dueIds.Count, maxSources), nowUtc);
+
                 if (dueIds.Count == 0) return;
 
-                var maxParallel = Math.Max(1, _opt.MaxParallelFetches);
-                using var gate = new SemaphoreSlim(maxParallel);
-
-                var tasks = dueIds.Select(async id =>
+                // IMPORTANT: Even if ingestion "interval" is small, the global gate prevents storms.
+                // We still process dueIds sequentially to be extra friendly.
+                foreach (var id in dueIds)
                 {
-                    await gate.WaitAsync(ct);
-                    try { await ProcessOne(runId, id, ct); }
-                    finally { gate.Release(); }
-                }).ToList();
+                    ct.ThrowIfCancellationRequested();
+                    await ProcessOne(runId, id, ct);
+                }
 
-                await Task.WhenAll(tasks);
-
-                _logger.LogInformation("YT-RSS[{Run}]: COMPLETE due={Due} maxParallel={MaxPar}", runId, dueIds.Count, maxParallel);
+                _logger.LogInformation("YT-RSS[{Run}]: COMPLETE processed={Count}", runId, dueIds.Count);
             }
             catch (OperationCanceledException)
             {
@@ -122,12 +118,15 @@ namespace TechNewsWorker.Services
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
-            var http = _httpClientFactory.CreateClient("ingestion");
-
-            // Stronger “looks like a real client” headers for YouTube/Google
-            EnsureYouTubeFriendlyHeaders(http);
+            var http = _httpClientFactory.CreateClient("youtube");
 
             var src = await db.NewsSources.FirstAsync(x => x.Id == sourceId, ct);
+
+            // sanitize dirty DB values (handles trailing \n, spaces)
+            src.YouTubeChannelId = Sanitize(src.YouTubeChannelId);
+            src.RssUrl = Sanitize(src.RssUrl);
+            src.LastEtag = Sanitize(src.LastEtag);
+            src.LastModified = Sanitize(src.LastModified);
 
             try
             {
@@ -140,6 +139,10 @@ namespace TechNewsWorker.Services
             }
             catch (Exception ex)
             {
+                // If something unexpected escapes, mark fail & schedule soon.
+                TouchScheduleFail(src, $"Unhandled: {ex.Message}", isThrottle: false);
+                await db.SaveChangesAsync(ct);
+
                 _logger.LogWarning(ex, "YT-RSS[{Run}]: source failed source={Name}", runId, src.Name);
             }
         }
@@ -148,186 +151,138 @@ namespace TechNewsWorker.Services
         {
             if (string.IsNullOrWhiteSpace(src.YouTubeChannelId))
             {
-                ScheduleOk(src);
+                TouchScheduleOk(src);
+                src.ErrorCount = 0;
+                src.LastError = null;
                 return;
             }
 
-            var feedUrl = BuildYouTubeFeedUrl(src.YouTubeChannelId!.Trim());
+            var channelId = Sanitize(src.YouTubeChannelId)!;
+            var feedUrl = BuildYouTubeFeedUrl(channelId);
 
-            for (var fetch = 0; fetch < MaxFetchesPerSourcePerRun; fetch++)
+            // Global pacing to avoid YouTube blocks
+            await EnforceMinDelayBetweenRequests(ct);
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, feedUrl);
+
+            // Conditional GET
+            if (!string.IsNullOrWhiteSpace(src.LastEtag))
+                req.Headers.TryAddWithoutValidation("If-None-Match", src.LastEtag);
+
+            if (!string.IsNullOrWhiteSpace(src.LastModified))
+                req.Headers.TryAddWithoutValidation("If-Modified-Since", src.LastModified);
+
+            using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            // 304: nothing new
+            if (resp.StatusCode == HttpStatusCode.NotModified)
             {
-                ct.ThrowIfCancellationRequested();
+                TouchScheduleOk(src);
+                src.ErrorCount = 0;
+                src.LastError = null;
+                return;
+            }
 
-                var attempt = 0;
-                while (true)
+            // Throttle / edge transient -> cooldown (short, not 30 mins)
+            if ((int)resp.StatusCode == 429 ||
+                resp.StatusCode == HttpStatusCode.ServiceUnavailable ||
+                resp.StatusCode == HttpStatusCode.BadGateway)
+            {
+                var body = await SafeReadBody(resp, ct);
+                TouchScheduleFail(src, $"YT-RSS throttled HTTP {(int)resp.StatusCode}: {Truncate(body, 250)}", isThrottle: true);
+                return;
+            }
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await SafeReadBody(resp, ct);
+                TouchScheduleFail(src, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 300)}", isThrottle: false);
+                return;
+            }
+
+            // Save caching headers
+            if (resp.Headers.ETag != null)
+                src.LastEtag = Sanitize(resp.Headers.ETag.ToString());
+
+            if (resp.Content.Headers.LastModified.HasValue)
+                src.LastModified = resp.Content.Headers.LastModified.Value.ToString("R");
+
+            // Guard: YouTube sometimes returns HTML “bot check” pages or other non-XML.
+            var mediaType = resp.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
+            if (mediaType != null && !mediaType.Contains("xml") && !mediaType.Contains("atom"))
+            {
+                var body = await SafeReadBody(resp, ct);
+                TouchScheduleFail(src, $"Non-XML response ({mediaType}). Likely edge throttle.", isThrottle: true);
+                return;
+            }
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+
+            // Parse Atom feed
+            var parsed = await ParseYouTubeFeed(stream, ct);
+
+            // Keep newest items
+            var take = Math.Max(1, _opt.MaxItemsPerSource);
+            var newest = parsed
+                .OrderByDescending(x => x.PublishedAtUtc)
+                .Take(take)
+                .ToList();
+
+            if (newest.Count == 0)
+            {
+                TouchScheduleOk(src);
+                src.ErrorCount = 0;
+                src.LastError = null;
+                return;
+            }
+
+            var extIds = newest.Select(x => x.VideoId).Distinct().ToList();
+
+            var existing = await db.FeedItems.AsNoTracking()
+                .Where(x => x.SourceId == src.Id && extIds.Contains(x.ExternalId))
+                .Select(x => x.ExternalId)
+                .ToListAsync(ct);
+
+            var existingSet = existing.Count == 0 ? new HashSet<string>() : new HashSet<string>(existing);
+
+            var added = 0;
+
+            foreach (var v in newest)
+            {
+                if (existingSet.Contains(v.VideoId)) continue;
+
+                db.FeedItems.Add(new FeedItem
                 {
-                    ct.ThrowIfCancellationRequested();
+                    Id = Guid.NewGuid(),
+                    SourceId = src.Id,
+                    ExternalId = v.VideoId,
+                    Kind = FeedItemKind.Video,
 
-                    // Global pacing (your existing setting)
-                    await EnforceMinDelayBetweenRequests(ct);
+                    Title = Truncate(v.Title, 500),
+                    Summary = Truncate(CleanText(v.Summary), 2000),
+                    LinkUrl = Truncate(v.WatchUrl, 1200),
+                    ImageUrl = Truncate(v.ThumbnailUrl, 1200),
 
-                    using var req = new HttpRequestMessage(HttpMethod.Get, feedUrl);
+                    PublishedAt = v.PublishedAtUtc.UtcDateTime,
+                    ImportedAt = DateTime.UtcNow,
 
-                    // Conditional GET
-                    if (!string.IsNullOrWhiteSpace(src.LastEtag))
-                        req.Headers.TryAddWithoutValidation("If-None-Match", src.LastEtag);
+                    Author = Truncate(v.ChannelTitle, 200),
+                    YouTubeVideoId = Truncate(v.VideoId, 50),
+                    EmbedUrl = Truncate($"https://www.youtube.com/embed/{v.VideoId}", 200),
 
-                    if (!string.IsNullOrWhiteSpace(src.LastModified))
-                        req.Headers.TryAddWithoutValidation("If-Modified-Since", src.LastModified);
+                    IsActive = true
+                });
 
-                    using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-
-                    // 304 => nothing new
-                    if (resp.StatusCode == HttpStatusCode.NotModified)
-                    {
-                        // Success-like outcome: clear noise
-                        MarkSuccess(src);
-                        ScheduleOk(src);
-                        return;
-                    }
-
-                    // Read minimal body only on failures
-                    if (!resp.IsSuccessStatusCode)
-                    {
-                        var body = await SafeReadBody(resp, ct);
-                        var transient = IsTransientYouTubeFailure(resp.StatusCode, body);
-
-                        // Quick retry for transient issues (NO long backoff)
-                        if (transient && attempt < TransientRetryDelaysMs.Length)
-                        {
-                            var delay = TransientRetryDelaysMs[attempt];
-                            attempt++;
-
-                            _logger.LogWarning(
-                                "YT-RSS transient HTTP {Code} for {Name}. retry {Attempt}/{Max} in {Delay}ms",
-                                (int)resp.StatusCode, src.Name, attempt, TransientRetryDelaysMs.Length, delay);
-
-                            await Task.Delay(delay, ct);
-                            continue;
-                        }
-
-                        // After retries:
-                        if (transient)
-                        {
-                            // Soft-fail: DO NOT store scary error, DO NOT long backoff.
-                            // Keep normal schedule so we try again soon and don’t miss items.
-                            MarkSoftTransientFailure(src);
-                            ScheduleOk(src);
-                            return;
-                        }
-
-                        // Non-transient => record error (likely real/consistent misconfig)
-                        MarkHardFailure(src, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 500)}");
-                        ScheduleFailShort(src);
-                        return;
-                    }
-
-                    // Success:
-                    // Save caching headers
-                    if (resp.Headers.ETag != null)
-                        src.LastEtag = resp.Headers.ETag.ToString();
-
-                    if (resp.Content.Headers.LastModified.HasValue)
-                        src.LastModified = resp.Content.Headers.LastModified.Value.ToString("R");
-
-                    await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-
-                    var parsed = await ParseYouTubeFeed(stream, ct);
-
-                    var take = Math.Max(1, _opt.MaxItemsPerSource);
-                    var newest = parsed
-                        .OrderByDescending(x => x.PublishedAtUtc)
-                        .Take(take)
-                        .ToList();
-
-                    if (newest.Count == 0)
-                    {
-                        MarkSuccess(src);
-                        ScheduleOk(src);
-                        return;
-                    }
-
-                    var extIds = newest.Select(x => x.VideoId).Distinct().ToList();
-
-                    var existing = await db.FeedItems.AsNoTracking()
-                        .Where(x => x.SourceId == src.Id && extIds.Contains(x.ExternalId))
-                        .Select(x => x.ExternalId)
-                        .ToListAsync(ct);
-
-                    var existingSet = existing.Count == 0 ? new HashSet<string>() : new HashSet<string>(existing);
-
-                    var added = 0;
-
-                    foreach (var v in newest)
-                    {
-                        if (existingSet.Contains(v.VideoId)) continue;
-
-                        db.FeedItems.Add(new FeedItem
-                        {
-                            Id = Guid.NewGuid(),
-                            SourceId = src.Id,
-                            ExternalId = v.VideoId,
-                            Kind = FeedItemKind.Video,
-                            Title = Truncate(v.Title, 500),
-                            Summary = Truncate(CleanText(v.Summary), 2000),
-                            LinkUrl = Truncate(v.WatchUrl, 1200),
-                            ImageUrl = Truncate(v.ThumbnailUrl, 1200),
-                            PublishedAt = v.PublishedAtUtc.UtcDateTime,
-                            ImportedAt = DateTime.UtcNow,
-                            Author = Truncate(v.ChannelTitle, 200),
-                            YouTubeVideoId = Truncate(v.VideoId, 50),
-                            EmbedUrl = Truncate($"https://www.youtube.com/embed/{v.VideoId}", 200),
-                            IsActive = true
-                        });
-
-                        added++;
-                        if (added >= take) break;
-                    }
-
-                    MarkSuccess(src);
-                    src.Cursor = null;
-
-                    _logger.LogInformation("YT-RSS: finished source={Name} added={Added} url={Url}", src.Name, added, feedUrl);
-
-                    ScheduleOk(src);
-                    return;
-                }
-            }
-        }
-
-        private static void EnsureYouTubeFriendlyHeaders(HttpClient http)
-        {
-            // Only set if not already set by the factory
-            if (!http.DefaultRequestHeaders.UserAgent.Any())
-                http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; WargalNewsWorker/1.0; +https://wargalnews.com)");
-
-            if (!http.DefaultRequestHeaders.Accept.Any())
-                http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/atom+xml"));
-
-            if (!http.DefaultRequestHeaders.AcceptEncoding.Any())
-                http.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip, deflate, br");
-        }
-
-        private static bool IsTransientYouTubeFailure(HttpStatusCode code, string? body)
-        {
-            var c = (int)code;
-
-            // Typical transient codes
-            if (c == 408 || c == 429 || c == 500 || c == 502 || c == 503 || c == 504)
-                return true;
-
-            // YouTube RSS sometimes returns 404 with a Google HTML error page (robot.png).
-            if (c == 404 && !string.IsNullOrWhiteSpace(body))
-            {
-                var b = body.AsSpan();
-                // cheap contains (case-sensitive fragments that appear in those pages)
-                if (body.Contains("www.google.com/images/errors/robot.png", StringComparison.OrdinalIgnoreCase) ||
-                    body.Contains("Error 404 (Not Found)", StringComparison.OrdinalIgnoreCase) ||
-                    body.Contains("<title>Error 404", StringComparison.OrdinalIgnoreCase))
-                    return true;
+                added++;
+                if (added >= take) break;
             }
 
-            return false;
+            TouchScheduleOk(src);
+            src.ErrorCount = 0;
+            src.LastError = null;
+            src.Cursor = null;
+
+            _logger.LogInformation("YT-RSS: finished source={Name} added={Added} url={Url}", src.Name, added, feedUrl);
         }
 
         private static string BuildYouTubeFeedUrl(string channelId)
@@ -412,7 +367,7 @@ namespace TechNewsWorker.Services
             return results;
         }
 
-        private void ScheduleOk(NewsSource src)
+        private void TouchScheduleOk(NewsSource src)
         {
             var now = DateTimeOffset.UtcNow;
             src.LastFetchedAt = now;
@@ -423,53 +378,42 @@ namespace TechNewsWorker.Services
                     ? src.FetchIntervalSeconds
                     : Math.Max(1, src.FetchIntervalMinutes) * 60;
 
-            intervalSeconds += Random.Shared.Next(0, ScheduleJitterMaxSeconds + 1);
+            // jitter avoids herding
+            var jitterMax = Math.Max(0, _yt.ScheduleJitterMaxSeconds);
+            intervalSeconds += (jitterMax == 0) ? 0 : Random.Shared.Next(0, jitterMax + 1);
 
-            // Keep it reasonably frequent (your config decides)
-            src.NextFetchAt = now.AddSeconds(Math.Max(5, intervalSeconds));
+            src.NextFetchAt = now.AddSeconds(Math.Max(10, intervalSeconds));
         }
 
-        // Soft transient failure: do NOT store scary error + do NOT snowball backoff
-        private void MarkSoftTransientFailure(NewsSource src)
+        private void TouchScheduleFail(NewsSource src, string err, bool isThrottle)
         {
-            src.ErrorCount = Math.Min(src.ErrorCount + 1, 10);
+            var now = DateTimeOffset.UtcNow;
+            src.LastFetchedAt = now;
+            src.UpdatedAt = now;
 
-            // Avoid polluting the API/DB with transient Google HTML
-            // (still visible in logs)
-            if (src.ErrorCount >= 3)
-                src.LastError = "YT-RSS transient failures (edge/rate-limit).";
-            else
-                src.LastError = null;
-        }
-
-        // Hard failure: store error (likely persistent)
-        private void MarkHardFailure(NewsSource src, string err)
-        {
+            // Only increment ErrorCount for real failures
             src.ErrorCount = Math.Min(src.ErrorCount + 1, 50);
             src.LastError = Truncate(err, 800);
-        }
 
-        // Short backoff for hard failures, capped (NO 30min)
-        private void ScheduleFailShort(NewsSource src)
-        {
-            var now = DateTimeOffset.UtcNow;
-            src.LastFetchedAt = now;
-            src.UpdatedAt = now;
+            if (isThrottle)
+            {
+                // short cooldown (avoid ban), not huge
+                var mins = Math.Max(2, _yt.ThrottleBackoffMinutes);
+                mins = Math.Min(mins, Math.Max(2, _yt.MaxBackoffMinutes));
+                src.NextFetchAt = now.AddMinutes(mins);
+                return;
+            }
 
-            var intervalSeconds =
+            // Non-throttle failures: small exponential backoff but clamped
+            var baseSeconds =
                 src.FetchIntervalSeconds > 0
                     ? src.FetchIntervalSeconds
                     : Math.Max(1, src.FetchIntervalMinutes) * 60;
 
-            // Keep retries frequent but not too aggressive (cap 5 minutes)
-            var backoffSeconds = Math.Min(intervalSeconds * Math.Max(2, src.ErrorCount), 60 * 5);
-            src.NextFetchAt = now.AddSeconds(Math.Max(10, backoffSeconds));
-        }
+            var factor = Math.Min(8, Math.Max(2, src.ErrorCount)); // 2..8
+            var backoffSeconds = Math.Min(baseSeconds * factor, _yt.MaxBackoffMinutes * 60);
 
-        private static void MarkSuccess(NewsSource src)
-        {
-            src.ErrorCount = 0;
-            src.LastError = null;
+            src.NextFetchAt = now.AddSeconds(Math.Max(20, backoffSeconds));
         }
 
         private static DateTimeOffset? ParseAtomDate(string? s)
@@ -490,8 +434,19 @@ namespace TechNewsWorker.Services
 
         private static async Task<string> SafeReadBody(HttpResponseMessage resp, CancellationToken ct)
         {
-            try { return await resp.Content.ReadAsStringAsync(ct); }
-            catch { return string.Empty; }
+            try
+            {
+                var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
+                if (bytes.Length == 0) return string.Empty;
+
+                // keep it small
+                var take = Math.Min(bytes.Length, 2000);
+                return Encoding.UTF8.GetString(bytes, 0, take);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static string? CleanText(string? text)
@@ -505,6 +460,12 @@ namespace TechNewsWorker.Services
         {
             if (string.IsNullOrEmpty(s)) return s;
             return s.Length <= max ? s : s.Substring(0, max);
+        }
+
+        private static string? Sanitize(string? s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return s;
+            return s.Replace("\r", "").Replace("\n", "").Trim();
         }
 
         private sealed class YouTubeFeedVideo
