@@ -8,9 +8,8 @@ plugins {
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
-val hasKeystoreFile = keystorePropertiesFile.exists()
 
-if (hasKeystoreFile) {
+if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
 
@@ -23,7 +22,7 @@ val storeFileVal = prop("storeFile")
 val storePasswordVal = prop("storePassword")
 
 val hasReleaseSigning =
-    hasKeystoreFile &&
+    keystorePropertiesFile.exists() &&
         keyAliasVal != null &&
         keyPasswordVal != null &&
         storeFileVal != null &&
@@ -53,28 +52,44 @@ android {
     }
 
     signingConfigs {
-        // Always exists (Gradle creates debug automatically, but we keep release conditional)
         create("release") {
-            if (hasReleaseSigning) {
-                keyAlias = keyAliasVal!!
-                keyPassword = keyPasswordVal!!
-                storeFile = rootProject.file("app/$storeFileVal")
-                storePassword = storePasswordVal!!
+            if (!hasReleaseSigning) {
+                throw GradleException(
+                    """
+                    Missing release signing config.
+                    Create android/key.properties with:
+                      storeFile=<your-upload-keystore-file.jks>
+                      storePassword=...
+                      keyAlias=...
+                      keyPassword=...
+
+                    And place the keystore at:
+                      android/app/<storeFile>
+
+                    IMPORTANT:
+                    Play expects your AAB to be signed with the Upload key certificate SHA-1:
+                      B7:52:F7:02:B0:24:F9:8A:85:D9:12:D9:C3:A6:95:B0:5C:AC:99:A9
+                    """.trimIndent()
+                )
             }
+
+            keyAlias = keyAliasVal!!
+            keyPassword = keyPasswordVal!!
+            storeFile = rootProject.file("app/$storeFileVal")
+            storePassword = storePasswordVal!!
         }
     }
 
     buildTypes {
         release {
-            // ✅ If no keystore on this machine, use debug signing so local --release works
-            signingConfig = if (hasReleaseSigning) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
-
+            // ✅ Always use the upload keystore for release
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             isShrinkResources = false
+        }
+
+        debug {
+            // default debug signing
         }
     }
 }
