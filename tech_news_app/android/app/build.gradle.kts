@@ -8,12 +8,28 @@ plugins {
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
-if (keystorePropertiesFile.exists()) {
+val hasKeystoreFile = keystorePropertiesFile.exists()
+
+if (hasKeystoreFile) {
     keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
 
+fun prop(name: String): String? =
+    (keystoreProperties[name] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+
+val keyAliasVal = prop("keyAlias")
+val keyPasswordVal = prop("keyPassword")
+val storeFileVal = prop("storeFile")
+val storePasswordVal = prop("storePassword")
+
+val hasReleaseSigning =
+    hasKeystoreFile &&
+        keyAliasVal != null &&
+        keyPasswordVal != null &&
+        storeFileVal != null &&
+        storePasswordVal != null
+
 android {
-    // ✅ CHANGED: namespace must match your new package
     namespace = "com.wargalstudio.wargalnews"
 
     compileSdk = flutter.compileSdkVersion
@@ -29,9 +45,7 @@ android {
     }
 
     defaultConfig {
-        // ✅ CHANGED: applicationId must NOT be com.example.*
         applicationId = "com.wargalstudio.wargalnews"
-
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -39,18 +53,26 @@ android {
     }
 
     signingConfigs {
+        // Always exists (Gradle creates debug automatically, but we keep release conditional)
         create("release") {
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["keyPassword"] as String
-            storeFile = rootProject.file("app/${keystoreProperties["storeFile"] as String}")
-            storePassword = keystoreProperties["storePassword"] as String
+            if (hasReleaseSigning) {
+                keyAlias = keyAliasVal!!
+                keyPassword = keyPasswordVal!!
+                storeFile = rootProject.file("app/$storeFileVal")
+                storePassword = storePasswordVal!!
+            }
         }
     }
 
     buildTypes {
         release {
-            // ✅ FIX: Use release signing (not debug)
-            signingConfig = signingConfigs.getByName("release")
+            // ✅ If no keystore on this machine, use debug signing so local --release works
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+
             isMinifyEnabled = false
             isShrinkResources = false
         }

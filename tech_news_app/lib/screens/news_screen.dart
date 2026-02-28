@@ -117,10 +117,12 @@ class NewsScreenState extends State<NewsScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _openModal(BuildContext context, NewsItem item) {
-    ContentModal.open(context, item);
-  }
+ void _openModal(BuildContext context, NewsItem item) {
+  final p = context.read<NewsProvider>();
+  final related = p.items.where((x) => x.kind == 2).toList();
 
+  ContentModal.open(context, item, related: related);
+}
   int _sliderSignature(List<NewsItem> slider) {
     int h = 17;
     for (final it in slider) {
@@ -522,11 +524,7 @@ class _PinnedTopBar extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w900),
             ),
           ),
-          if (p.isSilentRefreshing)
-            const Padding(
-              padding: EdgeInsets.only(left: 10),
-              child: Icon(Icons.sync, size: 18),
-            ),
+ 
         ],
       ),
     );

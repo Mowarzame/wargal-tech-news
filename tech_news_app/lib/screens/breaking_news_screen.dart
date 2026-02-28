@@ -139,9 +139,14 @@ class BreakingNewsScreenState extends State<BreakingNewsScreen>
     );
   }
 
-  void _openContent(BuildContext context, NewsItem item) {
-    ContentModal.open(context, item);
-  }
+void _openContent(BuildContext context, NewsItem item) {
+  final p = context.read<NewsProvider>();
+  final related = p.items
+      .where((x) => x.kind == 2) // videos
+      .toList();
+
+  ContentModal.open(context, item, related: related);
+}
 
   void _startOrStopSlideshow() {
     if (_queue.length < 2) {
@@ -747,11 +752,7 @@ class _PinnedFiltersBar extends StatelessWidget {
               ),
             ),
           ),
-          if (p.isSilentRefreshing)
-            const Padding(
-              padding: EdgeInsets.only(left: 8),
-              child: Icon(Icons.sync, size: 18),
-            ),
+   
         ],
       ),
     );
