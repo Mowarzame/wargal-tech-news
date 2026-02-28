@@ -97,73 +97,73 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
                 {clean(item?.title) || "(Untitled)"}
               </Typography>
 
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, minWidth: 0 }}>
-                {/* Mobile: icon only */}
-                <Avatar
-                  src={sourceIcon}
-                  sx={{
-                    display: { xs: "inline-flex", md: "none" },
-                    width: { xs: 18, sm: 20 },
-                    height: { xs: 18, sm: 20 },
-                    bgcolor: "rgba(255,255,255,.25)",
-                    border: "1px solid rgba(255,255,255,.35)",
-                    flex: "0 0 auto",
-                  }}
-                >
-                  {!sourceIcon && clean(item?.sourceName)?.[0]}
-                </Avatar>
 
-                {/* Desktop: show source name */}
-                <Typography
-                  sx={{
-                    display: { xs: "none", md: "block" },
-                    color: "rgba(255,255,255,.88)",
-                    fontWeight: 850,
-                    fontSize: 11,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    minWidth: 0,
-                  }}
-                >
-                  {clean(item?.sourceName) || "Source"}
-                </Typography>
 
-                <Box sx={{ flex: 1 }} />
+<Box sx={{ display: "flex", alignItems: "center", gap: 0.8, minWidth: 0 }}>
+  {/* ✅ Always show responsive source icon (mobile + desktop) */}
+  <Avatar
+    src={sourceIcon}
+    alt={clean(item?.sourceName) || "Source"}
+    sx={{
+      width: { xs: 18, sm: 20, md: 22 },
+      height: { xs: 18, sm: 20, md: 22 },
+      bgcolor: "rgba(255,255,255,.25)",
+      border: "1px solid rgba(255,255,255,.35)",
+      flex: "0 0 auto",
+    }}
+  >
+    {!sourceIcon && clean(item?.sourceName)?.[0]}
+  </Avatar>
 
-                {/* ✅ Force time ago white */}
-                <TimeAgo
-                  iso={item?.publishedAt}
-                  variant="caption"
-                  sx={{ color: "rgba(255,255,255,.92)", fontWeight: 900, fontSize: { xs: 10, md: 11 } }}
-                />
+  {/* Desktop: keep showing source name (UI remains same) */}
+  <Typography
+    sx={{
+      display: { xs: "none", md: "block" },
+      color: "rgba(255,255,255,.88)",
+      fontWeight: 850,
+      fontSize: 11,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      minWidth: 0,
+    }}
+  >
+    {clean(item?.sourceName) || "Source"}
+  </Typography>
 
-                {/* Mobile: video icon / Desktop: chip */}
-                {isVideo && (
-                  <>
-                    <PlayCircleFilledWhiteIcon
-                      sx={{
-                        display: { xs: "block", md: "none" },
-                        fontSize: 16,
-                        color: "white",
-                        opacity: 0.95,
-                        flex: "0 0 auto",
-                      }}
-                    />
-                    <Chip
-                      label="Video"
-                      size="small"
-                      color="error"
-                      sx={{
-                        display: { xs: "none", md: "inline-flex" },
-                        height: 18,
-                        ml: 0.25,
-                        "& .MuiChip-label": { px: 0.6, fontSize: 9.5, fontWeight: 900 },
-                      }}
-                    />
-                  </>
-                )}
-              </Box>
+  <Box sx={{ flex: 1 }} />
+
+  <TimeAgo
+    iso={item?.publishedAt}
+    variant="caption"
+    sx={{ color: "rgba(255,255,255,.92)", fontWeight: 900, fontSize: { xs: 10, md: 11 } }}
+  />
+
+  {isVideo && (
+    <>
+      <PlayCircleFilledWhiteIcon
+        sx={{
+          display: { xs: "block", md: "none" },
+          fontSize: 16,
+          color: "white",
+          opacity: 0.95,
+          flex: "0 0 auto",
+        }}
+      />
+      <Chip
+        label="Video"
+        size="small"
+        color="error"
+        sx={{
+          display: { xs: "none", md: "inline-flex" },
+          height: 18,
+          ml: 0.25,
+          "& .MuiChip-label": { px: 0.6, fontSize: 9.5, fontWeight: 900 },
+        }}
+      />
+    </>
+  )}
+</Box>
             </Box>
           </Box>
         );
