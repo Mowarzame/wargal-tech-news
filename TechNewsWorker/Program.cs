@@ -33,31 +33,19 @@ builder.Services.AddDbContext<WorkerDbContext>(opt =>
     opt.UseNpgsql(cs);
 });
 
-// Shared handler: decompression prevents “Invalid character in encoding” from gzip/br bodies
-static SocketsHttpHandler CreateHandler() => new()
+// Http client (CRITICAL: enable automatic decompression)
+builder.Services.AddHttpClient("ingestion", c =>
 {
-    AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
-};
-
-// RSS http client
-builder.Services.AddHttpClient("rss", (sp, c) =>
-{
-    var rss = sp.GetRequiredService<IOptions<RssOptions>>().Value;
-    c.Timeout = TimeSpan.FromSeconds(Math.Max(5, rss.RequestTimeoutSeconds));
-    c.DefaultRequestHeaders.UserAgent.ParseAdd(rss.UserAgent);
-    c.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8");
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("WargalNewsWorker/1.0");
 })
-.ConfigurePrimaryHttpMessageHandler(CreateHandler);
-
-// YouTube http client (separate UA + timeout)
-builder.Services.AddHttpClient("youtube", (sp, c) =>
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    var yt = sp.GetRequiredService<IOptions<YouTubeOptions>>().Value;
-    c.Timeout = TimeSpan.FromSeconds(Math.Max(5, yt.RequestTimeoutSeconds));
-    c.DefaultRequestHeaders.UserAgent.ParseAdd(yt.UserAgent);
-    c.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/atom+xml, application/xml;q=0.9, */*;q=0.8");
-})
-.ConfigurePrimaryHttpMessageHandler(CreateHandler);
+    AutomaticDecompression =
+        DecompressionMethods.GZip |
+        DecompressionMethods.Deflate |
+        DecompressionMethods.Brotli
+});
 
 // Heartbeat
 builder.Services.AddHostedService<WorkerHeartbeatService>();
@@ -69,24 +57,23 @@ builder.Services.AddHostedService<InternalPostsIngestionService>();
 
 var host = builder.Build();
 
-// Log actual values
+// Log actual interval values
 using (var scope = host.Services.CreateScope())
 {
     var opt = scope.ServiceProvider.GetRequiredService<IOptions<IngestionOptions>>().Value;
-    var yt = scope.ServiceProvider.GetRequiredService<IOptions<YouTubeOptions>>().Value;
+    var yt  = scope.ServiceProvider.GetRequiredService<IOptions<YouTubeOptions>>().Value;
     var rss = scope.ServiceProvider.GetRequiredService<IOptions<RssOptions>>().Value;
 
     Console.WriteLine(
         $"BOOT: RSS interval={opt.GetRssInterval()} YT interval={opt.GetYouTubeInterval()} " +
         $"MaxSourcesPerRun={opt.MaxSourcesPerRun} MaxItemsPerSource={opt.MaxItemsPerSource} " +
-        $"MaxParallelFetches={opt.MaxParallelFetches} " +
-        $"YT.MaxSourcesPerRun={yt.MaxSourcesPerRun} YT.MinDelayMs={yt.MinDelayBetweenRequestsMs} " +
-        $"RSS.TimeoutSec={rss.RequestTimeoutSeconds} YT.TimeoutSec={yt.RequestTimeoutSeconds}");
+        $"MaxParallelFetches={opt.MaxParallelFetches} YT.MaxResults={yt.MaxResults} " +
+        $"YT.MinDelayBetweenRequestsMs={yt.MinDelayBetweenRequestsMs} " +
+        $"RSS.TimeoutSec={rss.RequestTimeoutSeconds}");
 }
 
 host.Run();
 
-// Heartbeat service
 public sealed class WorkerHeartbeatService : BackgroundService
 {
     private readonly ILogger<WorkerHeartbeatService> _logger;
