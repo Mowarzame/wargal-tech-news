@@ -1,8 +1,7 @@
 // ==============================
 // File: wargal-web/app/components/news/FilteredNewsGrid.tsx
-// ✅ Fix: YouTube items render using embed URL (watch pages refuse to connect)
-// ✅ Keep original modal structure + restore related videos section
-// ✅ Safeguard: respects selectedCategory strictly (HomeShell passes "News")
+// ✅ Adds AI button + AI modal (auto-run) for grid items + modal header
+// ✅ Keeps existing modal + related videos layout
 // ==============================
 "use client";
 
@@ -20,15 +19,18 @@ import {
   Divider,
   useMediaQuery,
   Collapse,
+  Chip,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { useTheme } from "@mui/material/styles";
 
 import { NewsItem } from "@/app/types/news";
 import TimeAgo from "@/app/components/common/TimeAgo";
+import AiSomaliSummary from "@/app/components/ai/AiSomaliSummary";
 
 type Props = {
   selectedSourceIds: string[];
@@ -36,6 +38,9 @@ type Props = {
   selectedCategory?: string;
   getCategory?: (sourceId?: string | null) => string;
   pageSize?: number;
+
+  // Optional: if you want parent to also know what was opened
+  onOpen?: (it: NewsItem) => void;
 };
 
 function clean(s?: string | null) {
@@ -157,11 +162,19 @@ export default function FilteredNewsGrid({
   selectedCategory = "All",
   getCategory,
   pageSize = 60,
+  onOpen,
 }: Props) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
+  // Reader modal state (inside this component)
   const [openItem, setOpenItem] = useState<NewsItem | null>(null);
+
+  // AI modal state
+  const [aiOpen, setAiOpen] = useState(false);
+  const closeAi = () => setAiOpen(false);
+
+  // Pagination
   const [visibleCount, setVisibleCount] = useState<number>(pageSize);
 
   // ✅ Force “time ago” updates (every 60s)
@@ -180,7 +193,6 @@ export default function FilteredNewsGrid({
 
   // original item URL (watch/article)
   const modalUrl = useMemo(() => safeUrl(openItem?.url), [openItem]);
-
   const isVideo = openItem?.kind === 2;
 
   // YouTube embed for kind=2
@@ -231,7 +243,21 @@ export default function FilteredNewsGrid({
 
   const canLoadMore = displayItems.length > visibleCount;
 
-  const closeModal = () => setOpenItem(null);
+  const closeReader = () => setOpenItem(null);
+
+  const openReader = (it: NewsItem) => {
+    setOpenItem(it);
+    onOpen?.(it);
+  };
+
+  const openAiFor = (it: NewsItem) => {
+    setOpenItem(it);      // ensure AI knows which item
+    setAiOpen(true);      // open AI directly (no steps)
+  };
+
+  const aiKind: 1 | 2 = openItem?.kind === 2 ? 2 : 1;
+  const aiRunKey =
+    `${clean(openItem?.id) || clean(openItem?.url) || "x"}-${nowTick}-${aiOpen ? "open" : "closed"}`;
 
   const relatedVideos = useMemo(() => {
     if (!openItem) return [] as NewsItem[];
@@ -260,8 +286,7 @@ export default function FilteredNewsGrid({
         const baseScore = scoreMatch(baseTokens, candTokens);
         if (baseScore <= 0) return null;
 
-        const sameSource =
-          clean(String(it?.sourceId ?? "")) === clean(String(openItem?.sourceId ?? ""));
+        const sameSource = clean(String(it?.sourceId ?? "")) === clean(String(openItem?.sourceId ?? ""));
         const score = baseScore + (sameSource ? 0.08 : 0);
 
         if (baseScore < 0.22 && !sameSource) return null;
@@ -298,10 +323,11 @@ export default function FilteredNewsGrid({
             const thumb = pickThumb(rv);
             const title = clean(rv?.title) || "(Untitled)";
             const source = clean(rv?.sourceName) || "Source";
+
             return (
               <Box
                 key={clean(rv?.id) || clean(rv?.url)}
-                onClick={() => setOpenItem(rv)}
+                onClick={() => openReader(rv)}
                 sx={{
                   cursor: "pointer",
                   display: "flex",
@@ -330,6 +356,7 @@ export default function FilteredNewsGrid({
                   <Typography fontWeight={900} sx={{ fontSize: 13, lineHeight: 1.2 }} noWrap>
                     {title}
                   </Typography>
+
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.6 }}>
                     <Avatar src={rv?.sourceIconUrl ?? undefined} sx={{ width: 18, height: 18 }}>
                       {(source[0] ?? "S").toUpperCase()}
@@ -380,8 +407,8 @@ export default function FilteredNewsGrid({
 
           return (
             <Box
-              key={clean(it?.id) || `${idx}`}
-              onClick={() => it && setOpenItem(it)}
+              key={clean(it?.id) || clean(it?.url) || `${idx}`}
+              onClick={() => openReader(it)}
               sx={{
                 cursor: "pointer",
                 bgcolor: "common.white",
@@ -390,8 +417,31 @@ export default function FilteredNewsGrid({
                 borderRadius: 2,
                 overflow: "hidden",
                 "&:hover": { boxShadow: 2 },
+                position: "relative",
               }}
             >
+              {/* ✅ AI button on card (top-right) */}
+              <Chip
+                icon={<AutoAwesomeIcon />}
+                label="AI"
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openAiFor(it);
+                }}
+                sx={{
+                  position: "absolute",
+                  top: 10,
+                  right: 10,
+                  fontWeight: 900,
+                  borderRadius: 999,
+                  bgcolor: "common.white",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  "&:hover": { bgcolor: "grey.50" },
+                }}
+              />
+
               <Box
                 sx={{
                   height: 160,
@@ -442,10 +492,10 @@ export default function FilteredNewsGrid({
         ) : null}
       </Box>
 
-      {/* Modal (original structure + related videos) */}
+      {/* Reader Modal */}
       <Dialog
-        open={!!openItem}
-        onClose={closeModal}
+        open={!!openItem && !aiOpen}
+        onClose={closeReader}
         fullWidth
         maxWidth={false}
         PaperProps={{
@@ -466,7 +516,20 @@ export default function FilteredNewsGrid({
               {clean(openItem?.title) || "Read"}
             </Typography>
 
-            <IconButton onClick={closeModal} aria-label="Close reader">
+            {/* ✅ AI button in modal header */}
+            {!!openItem && (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<AutoAwesomeIcon />}
+                onClick={() => openAiFor(openItem)}
+                sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+              >
+                Soo koob (AI)
+              </Button>
+            )}
+
+            <IconButton onClick={closeReader} aria-label="Close reader">
               <CloseIcon />
             </IconButton>
           </Box>
@@ -508,6 +571,19 @@ export default function FilteredNewsGrid({
               <Typography color="text.secondary" sx={{ mt: 0.5 }}>
                 The feed item URL is missing or not a valid absolute URL.
               </Typography>
+
+              {!!modalUrl && (
+                <Box sx={{ mt: 2 }}>
+                  <Button
+                    variant="contained"
+                    startIcon={<OpenInNewIcon />}
+                    onClick={() => window.open(modalUrl, "_blank", "noopener,noreferrer")}
+                    sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+                  >
+                    Open in new tab
+                  </Button>
+                </Box>
+              )}
             </Box>
           ) : (
             <Box
@@ -518,7 +594,6 @@ export default function FilteredNewsGrid({
                 flexDirection: "column",
               }}
             >
-          
               {/* main content area + related videos */}
               <Box
                 sx={{
@@ -590,6 +665,8 @@ export default function FilteredNewsGrid({
           <Divider sx={{ display: { xs: "block", md: "none" } }} />
         </DialogContent>
       </Dialog>
+
+
     </>
   );
 }

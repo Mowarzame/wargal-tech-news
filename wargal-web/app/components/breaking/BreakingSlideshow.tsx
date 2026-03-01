@@ -10,6 +10,7 @@ import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 import FlashOnIcon from "@mui/icons-material/FlashOn";
 import { NewsItem } from "@/app/types/news";
 import TimeAgo from "@/app/components/common/TimeAgo";
+import AiBadge from "../ai/AiBadge";
 
 type Props = {
   items: NewsItem[] | null | undefined;
@@ -186,26 +187,69 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
       </Box>
 
       {/* Right time */}
-      <Box
+{/* Right side: AI + Time */}
+<Box
+  sx={{
+    position: "absolute",
+    top: { xs: 10, md: 14 },
+    right: { xs: 10, md: 14 },
+    zIndex: 10,
+    display: "flex",
+    alignItems: "center",
+    gap: 1,
+  }}
+>
+  {/* ✅ AI Badge (only if summary exists) */}
+  {!!clean(item.summary) && (
+    <Box
+      sx={{
+        px: 1.1,
+        py: 0.6,
+        borderRadius: 999,
+        bgcolor: "rgba(255,255,255,.95)",
+        border: "1px solid",
+        borderColor: "divider",
+        display: "flex",
+        alignItems: "center",
+        gap: 0.6,
+        boxShadow: "0 4px 14px rgba(0,0,0,.15)",
+      }}
+    >
+
+      <Typography
         sx={{
-          position: "absolute",
-          top: { xs: 10, md: 14 },
-          right: { xs: 10, md: 14 },
-          zIndex: 10,
-          px: 1.1,
-          py: 0.7,
-          borderRadius: 999,
-          bgcolor: "rgba(0,0,0,.35)",
-          backdropFilter: "blur(8px)",
-          border: "1px solid rgba(255,255,255,.18)",
+          fontSize: 11.5,
+          fontWeight: 950,
+          lineHeight: 1,
         }}
       >
-        <TimeAgo
-          iso={item.publishedAt}
-          variant="caption"
-          sx={{ color: "rgba(255,255,255,.92)", fontWeight: 900, fontSize: { xs: 11, md: 12 } }}
-        />
-      </Box>
+        AI Summary
+      </Typography>
+    </Box>
+  )}
+
+  {/* Existing time badge */}
+  <Box
+    sx={{
+      px: 1.1,
+      py: 0.7,
+      borderRadius: 999,
+      bgcolor: "rgba(0,0,0,.35)",
+      backdropFilter: "blur(8px)",
+      border: "1px solid rgba(255,255,255,.18)",
+    }}
+  >
+    <TimeAgo
+      iso={item.publishedAt}
+      variant="caption"
+      sx={{
+        color: "rgba(255,255,255,.92)",
+        fontWeight: 900,
+        fontSize: { xs: 11, md: 12 },
+      }}
+    />
+  </Box>
+</Box>
 
       {safeItems.length > 1 && (
         <>

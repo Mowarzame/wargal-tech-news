@@ -4,6 +4,8 @@ import { Box, Typography, Avatar, Chip } from "@mui/material";
 import PlayCircleFilledWhiteIcon from "@mui/icons-material/PlayCircleFilledWhite";
 import { NewsItem } from "@/app/types/news";
 import TimeAgo from "@/app/components/common/TimeAgo";
+import AiBadge from "../ai/AiBadge";
+
 
 type Props = {
   items: NewsItem[] | null | undefined;
@@ -23,7 +25,7 @@ function pickImage(it?: NewsItem | null) {
 
   return "/placeholder-news.jpg";
 }
-
+const showAi = true;
 export default function NewsGridHighlights({ items, onOpen }: Props) {
   const list = (items ?? []).filter(Boolean);
   if (!list.length) return null;
@@ -68,6 +70,7 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
                 display: "block",
               }}
             />
+            {showAi ? <AiBadge /> : null}
 
             <Box
               sx={{

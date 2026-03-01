@@ -3,6 +3,7 @@
 import { Box, Typography, Avatar, Stack, Chip } from "@mui/material";
 import { NewsItem } from "@/app/types/news";
 import TimeAgo from "@/app/components/common/TimeAgo";
+import AiBadge from "../ai/AiBadge";
 
 type Props = {
   items: NewsItem[];
@@ -51,6 +52,7 @@ export default function FourUpRow({ items, onOpen }: Props) {
               bgcolor: "common.white",
               border: "1px solid",
               borderColor: "divider",
+                  position: "relative", // ✅ REQUIRED
             }}
           >
             <Box
@@ -59,6 +61,8 @@ export default function FourUpRow({ items, onOpen }: Props) {
               alt={item.title}
               sx={{ width: "100%", height: 140, objectFit: "cover", display: "block" }}
             />
+            {/* ✅ AI badge */}
+{!!clean(item.summary) && <AiBadge />}
 
             <Box sx={{ p: 1.5 }}>
               <Typography

@@ -16,7 +16,9 @@
     "@mui/material": "^7.3.7",
     "@mui/material-nextjs": "^7.3.7",
     "@tanstack/react-query": "^5.90.20",
+    "groq-sdk": "^0.37.0",
     "next": "16.1.6",
+    "openai": "^6.25.0",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },

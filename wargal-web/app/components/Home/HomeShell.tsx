@@ -50,6 +50,8 @@ import TopSideBar from "@/app/components/news/TopSidebar";
 import CategoryLanes from "@/app/components/news/CategoryLanes";
 import FilteredNewsGrid from "@/app/components/news/FilteredNewsGrid";
 import TimeAgo from "@/app/components/common/TimeAgo";
+import AiSomaliSummary from "@/app/components/ai/AiSomaliSummary";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 
 const REFRESH_MS = 60 * 1000;
 const MIN_GAP_MS = 8 * 1000;
@@ -772,6 +774,12 @@ const getCategoryForSource = (sourceId?: string | null) => {
   const openBreakingMenu = (e: React.MouseEvent<HTMLElement>) => setBreakingAnchor(e.currentTarget);
   const closeBreakingMenu = () => setBreakingAnchor(null);
 
+  const [aiOpen, setAiOpen] = useState(false);
+
+const aiKind: 1 | 2 = (openItem as any)?.kind === 2 ? 2 : 1;
+const showAi = true;
+const closeAi = () => setAiOpen(false);
+
   return (
     <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }} data-nowtick={nowTick}>
       <Box sx={{ px: { xs: 1.5, md: 2 }, py: 2 }}>
@@ -1000,13 +1008,14 @@ const getCategoryForSource = (sourceId?: string | null) => {
                 <Typography variant="h6" fontWeight={900} sx={{ mt: 2, mb: 1 }}>
                   All News
                 </Typography>
-                <FilteredNewsGrid
-                  selectedSourceIds={selectedIds}
-                  initialItems={allNewsInitial}
-                  pageSize={60}
-                  selectedCategory={globalCategory}
-                  getCategory={(sourceId) => getCategoryForSource(String(sourceId ?? ""))}
-                />
+            <FilteredNewsGrid
+          selectedSourceIds={selectedIds}
+          initialItems={allNewsInitial}
+          pageSize={60}
+          selectedCategory={globalCategory}
+          getCategory={(sourceId) => getCategoryForSource(String(sourceId ?? ""))}
+        onOpen={(it: NewsItem) => onOpen(it)}
+        />
               </>
             )}
           </Box>
@@ -1080,6 +1089,20 @@ const getCategoryForSource = (sourceId?: string | null) => {
                 sx={{ color: "text.secondary", fontWeight: 900 }}
               />
             )}
+
+<Button
+  size="small"
+  variant="outlined"
+  startIcon={<AutoAwesomeIcon />}
+  disabled={!openItem}
+  onClick={() => {
+    if (!openItem) return;
+    setAiOpen(true);
+  }}
+  sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+>
+  Soo koob (AI)
+</Button>
           </Stack>
         </DialogTitle>
 
@@ -1530,6 +1553,42 @@ const getCategoryForSource = (sourceId?: string | null) => {
           <Divider sx={{ display: { xs: "block", md: "none" } }} />
         </DialogContent>
       </Dialog>
+
+ {/* ✅ AI Summary Modal */}
+<Dialog
+  open={aiOpen}
+  onClose={closeAi}
+  fullWidth
+  maxWidth="sm"
+  PaperProps={{ sx: { borderRadius: 3 } }}
+>
+  <DialogTitle sx={{ fontWeight: 950, display: "flex", alignItems: "center", gap: 1 }}>
+    <AutoAwesomeIcon fontSize="small" />
+    <Box sx={{ flex: 1 }}>Soo koobid (AI)</Box>
+
+    <IconButton onClick={closeAi} aria-label="Close AI summary">
+      <CloseIcon />
+    </IconButton>
+  </DialogTitle>
+
+  <DialogContent sx={{ pt: 1.5 }}>
+{openItem ? (
+  <AiSomaliSummary
+    kind={aiKind}
+    title={clean((openItem as any)?.title)}
+    url={clean((openItem as any)?.url)}
+    sourceName={clean((openItem as any)?.sourceName)}
+      summary={clean((openItem as any)?.summary)}   // ✅ IMPORTANT
+    autoRun={true}
+    runKey={`${clean((openItem as any)?.id) || clean((openItem as any)?.url) || "x"}-${nowTick}`}
+  />
+) : (
+  <Typography variant="body2" color="text.secondary">
+    No item selected.
+  </Typography>
+)}
+  </DialogContent>
+</Dialog>
     </Box>
   );
 }

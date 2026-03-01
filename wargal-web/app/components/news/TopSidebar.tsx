@@ -1,6 +1,7 @@
 "use client";
 
 import { Box, Typography, Stack, Avatar, Divider } from "@mui/material";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { NewsItem } from "@/app/types/news";
 
 type Props = {
@@ -79,6 +80,8 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
           const sourceIcon = clean(it?.sourceIconUrl);
           const ago = timeAgoFromIso(it?.publishedAt);
 
+          const hasAi = !!clean((it as any)?.summary);
+
           return (
             <Box key={clean(it?.id) || `${idx}`}>
               <Box
@@ -93,7 +96,7 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   "&:hover": { bgcolor: "grey.50" },
                 }}
               >
-                {/* Left thumb */}
+                {/* Left thumb + ✅ AI badge overlay */}
                 <Box
                   sx={{
                     width: 54,
@@ -106,8 +109,35 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                     flexShrink: 0,
+                    position: "relative",
+                    overflow: "hidden",
                   }}
-                />
+                >
+                  {hasAi && (
+                    <Box
+                      sx={{
+                        position: "absolute",
+                        top: 6,
+                        right: 6,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.35,
+                        px: 0.65,
+                        py: 0.25,
+                        borderRadius: 999,
+                        bgcolor: "rgba(255,255,255,0.92)",
+                        border: "1px solid rgba(0,0,0,0.08)",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.10)",
+                        lineHeight: 1,
+                      }}
+                    >
+                      <AutoAwesomeIcon sx={{ fontSize: 12 }} />
+                      <Typography sx={{ fontSize: 10, fontWeight: 900, lineHeight: 1 }}>
+                        AI
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
 
                 {/* Middle text */}
                 <Box sx={{ minWidth: 0, flex: 1 }}>
@@ -155,7 +185,7 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   )}
                 </Box>
 
-                {/* ✅ Right: source icon */}
+                {/* Right: source icon */}
                 <Avatar
                   src={sourceIcon ? sourceIcon : undefined}
                   sx={{
