@@ -31,17 +31,17 @@ export default function PrivacyPage() {
               when you use our website and services.
             </Typography>
           </Box>
-
-          <Box>
-            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-              2. Information We Collect
-            </Typography>
-            <Typography variant="body1">
-              We may collect limited information such as device/browser details, approximate
-              location (based on IP), pages viewed, and basic analytics events. If you create an
-              account or sign in, we may process identifiers required for authentication.
-            </Typography>
-          </Box>
+<Box>
+  <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+    2. Information We Collect
+  </Typography>
+  <Typography variant="body1">
+    We collect only the information necessary to provide account functionality.
+    If you sign in, we store your username and basic account identifiers
+    required for authentication. We do not collect device fingerprints,
+    precise location data, or behavioral tracking information.
+  </Typography>
+</Box>
 
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
