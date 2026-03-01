@@ -1,7 +1,5 @@
 // ==============================
 // File: wargal-web/app/layout.tsx
-// ✅ SEO Base (site-wide): metadataBase, template title, icons, verification, OG/Twitter
-// ✅ AdSense: Put snippet directly in <head> for reliable verification
 // ==============================
 
 import type { Metadata } from "next";
@@ -9,8 +7,6 @@ import Providers from "./providers";
 import Navbar from "@/app/components/layout/Navbar";
 import Script from "next/script";
 import Footer from "./components/layout/Footer";
-
-const ADSENSE_CLIENT = "ca-pub-6865591380867722";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.wargalnews.com"),
@@ -87,28 +83,26 @@ export const metadata: Metadata = {
   },
 
   manifest: "/site.webmanifest",
-
-  // ✅ Add this AFTER you verify in Google Search Console
-  // verification: {
-  //   google: "PASTE_YOUR_GOOGLE_SITE_VERIFICATION_CODE",
-  // },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
-        {/* ✅ AdSense verification expects this in <head> (server HTML), not injected afterInteractive */}
+        {/* Google AdSense verification */}
         <script
           async
-          src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6865951938086772"
           crossOrigin="anonymous"
-        />
+        ></script>
       </head>
 
       <body>
         {/* Google Identity Services (GIS) */}
-        <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
+        <Script
+          src="https://accounts.google.com/gsi/client"
+          strategy="afterInteractive"
+        />
 
         <Providers>
           <Navbar />
