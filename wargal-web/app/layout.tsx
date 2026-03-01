@@ -1,12 +1,14 @@
 // ==============================
 // File: wargal-web/app/layout.tsx
 // ✅ SEO Base (site-wide): metadataBase, template title, icons, verification, OG/Twitter
+// ✅ AdSense: site verification script (head) for ca-pub-6865591380867722
 // ==============================
 
 import type { Metadata } from "next";
+import Script from "next/script";
+
 import Providers from "./providers";
 import Navbar from "@/app/components/layout/Navbar";
-import Script from "next/script";
 import Footer from "./components/layout/Footer";
 
 export const metadata: Metadata = {
@@ -80,10 +82,7 @@ export const metadata: Metadata = {
   },
 
   icons: {
-    icon: [
-      { url: "/favicon.ico" },
-      { url: "/images/logo/correctLogo.png" },
-    ],
+    icon: [{ url: "/favicon.ico" }, { url: "/images/logo/correctLogo.png" }],
     apple: [{ url: "/images/logo/correctLogo.png" }],
   },
 
@@ -99,6 +98,16 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        {/* ✅ Google AdSense (site ownership verification) */}
+        <Script
+          async
+          strategy="afterInteractive"
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6865591380867722"
+          crossOrigin="anonymous"
+        />
+      </head>
+
       <body>
         {/* Google Identity Services (GIS) */}
         <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
