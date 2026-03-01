@@ -90,11 +90,13 @@ export default function Navbar() {
     };
   }, []);
 
-  const tabValue = React.useMemo(() => {
-    if (pathname?.startsWith("/community")) return "/community";
-    if (pathname?.startsWith("/contact")) return "/contact";
-    return "/";
-  }, [pathname]);
+const tabValue = React.useMemo(() => {
+  if (pathname?.startsWith("/community")) return "/community";
+  if (pathname?.startsWith("/contact")) return "/contact";
+  if (pathname?.startsWith("/terms")) return "/terms";
+  if (pathname?.startsWith("/privacy")) return "/privacy";
+  return "/";
+}, [pathname]);
 
   const openLogin = (hint?: string | null) => {
     setLoginError(null);
@@ -194,20 +196,22 @@ export default function Navbar() {
 
         {/* Desktop tabs (md+ only, always show) */}
         <Box sx={{ display: { xs: "none", md: "flex" }, alignItems: "center", minWidth: 0 }}>
-          <Tabs
-            value={tabValue}
-            onChange={onTabChange}
-            textColor="inherit"
-            indicatorColor="secondary"
-            sx={{
-              minHeight: 40,
-              "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 900 },
-            }}
-          >
-            <Tab label="News" value="/" />
-            <Tab label="Community" value="/community" />
-            <Tab label="Contact" value="/contact" />
-          </Tabs>
+<Tabs
+  value={tabValue}
+  onChange={onTabChange}
+  textColor="inherit"
+  indicatorColor="secondary"
+  sx={{
+    minHeight: 40,
+    "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 900 },
+  }}
+>
+  <Tab label="News" value="/" />
+  <Tab label="Community" value="/community" />
+  <Tab label="Contact" value="/contact" />
+  <Tab label="Terms" value="/terms" />
+  <Tab label="Privacy" value="/privacy" />
+</Tabs>
         </Box>
 
         {/* Right: ALWAYS render same structure/width (prevents layout jump on reload) */}
@@ -313,6 +317,26 @@ export default function Navbar() {
                     Contact
                   </MenuItem>
 
+                  <MenuItem
+  onClick={() => {
+    onCloseMenu();
+    router.push("/terms");
+  }}
+  sx={{ fontWeight: 900 }}
+>
+  Terms
+</MenuItem>
+
+<MenuItem
+  onClick={() => {
+    onCloseMenu();
+    router.push("/privacy");
+  }}
+  sx={{ fontWeight: 900 }}
+>
+  Privacy
+</MenuItem>
+
                   <Divider sx={{ my: 0.5 }} />
 
                   <MenuItem onClick={doLogout} sx={{ fontWeight: 900 }}>
@@ -370,6 +394,13 @@ export default function Navbar() {
           <ListItemButton onClick={() => doNav("/contact")}>
             <ListItemText primary="Contact" primaryTypographyProps={{ fontWeight: 900 }} />
           </ListItemButton>
+          <ListItemButton onClick={() => doNav("/terms")}>
+  <ListItemText primary="Terms" primaryTypographyProps={{ fontWeight: 900 }} />
+</ListItemButton>
+
+<ListItemButton onClick={() => doNav("/privacy")}>
+  <ListItemText primary="Privacy" primaryTypographyProps={{ fontWeight: 900 }} />
+</ListItemButton>
 
           <Divider />
 
