@@ -1,15 +1,16 @@
 // ==============================
 // File: wargal-web/app/layout.tsx
 // ✅ SEO Base (site-wide): metadataBase, template title, icons, verification, OG/Twitter
-// ✅ AdSense: site verification script (head) for ca-pub-6865591380867722
+// ✅ AdSense: Put snippet directly in <head> for reliable verification
 // ==============================
 
 import type { Metadata } from "next";
-import Script from "next/script";
-
 import Providers from "./providers";
 import Navbar from "@/app/components/layout/Navbar";
+import Script from "next/script";
 import Footer from "./components/layout/Footer";
+
+const ADSENSE_CLIENT = "ca-pub-6865591380867722";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.wargalnews.com"),
@@ -48,7 +49,6 @@ export const metadata: Metadata = {
     googleBot: {
       index: true,
       follow: true,
-      // ✅ Helps avoid low-quality snippets
       "max-snippet": -1,
       "max-image-preview": "large",
       "max-video-preview": -1,
@@ -86,7 +86,6 @@ export const metadata: Metadata = {
     apple: [{ url: "/images/logo/correctLogo.png" }],
   },
 
-  // ✅ (Optional but recommended) If you have a manifest file
   manifest: "/site.webmanifest",
 
   // ✅ Add this AFTER you verify in Google Search Console
@@ -99,11 +98,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
-        {/* ✅ Google AdSense (site ownership verification) */}
-        <Script
+        {/* ✅ AdSense verification expects this in <head> (server HTML), not injected afterInteractive */}
+        <script
           async
-          strategy="afterInteractive"
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6865591380867722"
+          src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
           crossOrigin="anonymous"
         />
       </head>
