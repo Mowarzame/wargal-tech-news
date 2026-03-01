@@ -150,7 +150,7 @@ export default function Page() {
 
       {/* ✅ SEO H1: Helps Google associate homepage with "Wargal / Wargal News" */}
       <h1 style={{ position: "absolute", left: -10000, top: "auto", width: 1, height: 1, overflow: "hidden" }}>
-        Wargal News (Wargal) – Somali News, Videos & Community
+        Wargal News (Wargal) – Somali News, First Somali News Aggregator.
       </h1>
 
       <Suspense fallback={<HomeShellSkeleton />}>
