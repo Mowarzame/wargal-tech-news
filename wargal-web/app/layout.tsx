@@ -7,6 +7,7 @@ import type { Metadata } from "next";
 import Providers from "./providers";
 import Navbar from "@/app/components/layout/Navbar";
 import Script from "next/script";
+import Footer from "./components/layout/Footer";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.wargalnews.com"),
@@ -105,6 +106,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <Navbar />
           {children}
+          <Footer />
         </Providers>
       </body>
     </html>

@@ -90,12 +90,10 @@ export default function Navbar() {
     };
   }, []);
 
+const NAV_ROUTES = ["/", "/community"];
 const tabValue = React.useMemo(() => {
-  if (pathname?.startsWith("/community")) return "/community";
-  if (pathname?.startsWith("/contact")) return "/contact";
-  if (pathname?.startsWith("/terms")) return "/terms";
-  if (pathname?.startsWith("/privacy")) return "/privacy";
-  return "/";
+  if (!pathname) return false;
+  return NAV_ROUTES.includes(pathname) ? pathname : false;
 }, [pathname]);
 
   const openLogin = (hint?: string | null) => {
@@ -196,22 +194,20 @@ const tabValue = React.useMemo(() => {
 
         {/* Desktop tabs (md+ only, always show) */}
         <Box sx={{ display: { xs: "none", md: "flex" }, alignItems: "center", minWidth: 0 }}>
-<Tabs
-  value={tabValue}
-  onChange={onTabChange}
-  textColor="inherit"
-  indicatorColor="secondary"
-  sx={{
-    minHeight: 40,
-    "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 900 },
-  }}
->
-  <Tab label="News" value="/" />
-  <Tab label="Community" value="/community" />
-  <Tab label="Contact" value="/contact" />
-  <Tab label="Terms" value="/terms" />
-  <Tab label="Privacy" value="/privacy" />
-</Tabs>
+          <Tabs
+            value={tabValue}
+            onChange={onTabChange}
+            textColor="inherit"
+            indicatorColor="secondary"
+            sx={{
+              minHeight: 40,
+              "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 900 },
+            }}
+          >
+            <Tab label="News" value="/" />
+            <Tab label="Community" value="/community" />
+        
+          </Tabs>
         </Box>
 
         {/* Right: ALWAYS render same structure/width (prevents layout jump on reload) */}
@@ -307,35 +303,7 @@ const tabValue = React.useMemo(() => {
                   <MenuItem onClick={goCommunityFromMenu} sx={{ fontWeight: 900 }}>
                     Community
                   </MenuItem>
-                  <MenuItem
-                    onClick={() => {
-                      onCloseMenu();
-                      router.push("/contact");
-                    }}
-                    sx={{ fontWeight: 900 }}
-                  >
-                    Contact
-                  </MenuItem>
-
-                  <MenuItem
-  onClick={() => {
-    onCloseMenu();
-    router.push("/terms");
-  }}
-  sx={{ fontWeight: 900 }}
->
-  Terms
-</MenuItem>
-
-<MenuItem
-  onClick={() => {
-    onCloseMenu();
-    router.push("/privacy");
-  }}
-  sx={{ fontWeight: 900 }}
->
-  Privacy
-</MenuItem>
+    
 
                   <Divider sx={{ my: 0.5 }} />
 
@@ -391,17 +359,7 @@ const tabValue = React.useMemo(() => {
             <ListItemText primary="Community" primaryTypographyProps={{ fontWeight: 900 }} />
           </ListItemButton>
 
-          <ListItemButton onClick={() => doNav("/contact")}>
-            <ListItemText primary="Contact" primaryTypographyProps={{ fontWeight: 900 }} />
-          </ListItemButton>
-          <ListItemButton onClick={() => doNav("/terms")}>
-  <ListItemText primary="Terms" primaryTypographyProps={{ fontWeight: 900 }} />
-</ListItemButton>
-
-<ListItemButton onClick={() => doNav("/privacy")}>
-  <ListItemText primary="Privacy" primaryTypographyProps={{ fontWeight: 900 }} />
-</ListItemButton>
-
+   
           <Divider />
 
           {!isReady ? (
