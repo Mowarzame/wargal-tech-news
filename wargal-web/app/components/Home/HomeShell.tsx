@@ -1106,18 +1106,15 @@ const aiCategory = openItem ? clean(getCategoryForSource(clean((openItem as any)
             )}
 
 {/* ✅ Only show AI button if this item supports AI */}
-{canUseAiForItem(openItem) ? (
+{openItem && canUseAiForItem(openItem) ? (
   <Button
     size="small"
     variant="outlined"
     startIcon={<AutoAwesomeIcon />}
-    onClick={() => {
-      if (!openItem) return;
-      setAiOpen(true);
-    }}
+    onClick={() => setAiOpen(true)}
     sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
   >
-    Soo koob (AI Summary)
+    Soo koob (AI)
   </Button>
 ) : null}
           </Stack>

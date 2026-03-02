@@ -1,3 +1,4 @@
+// app/api/ai/somali-summary/route.ts
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
@@ -7,11 +8,8 @@ type Body = {
   kind: 1 | 2;
   title: string;
   url: string;
-  summary?: string | null;      // RSS description OR YouTube transcript (for ForeignNews videos)
+  summary?: string | null;      // ✅ now = transcript OR description (hybrid)
   sourceName?: string | null;
-
-  // ✅ NEW: used to enforce transcript-only for ForeignNews videos
-  category?: string | null;
 };
 
 function clean(s?: string | null) {
@@ -22,24 +20,14 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
 
-    const kind: 1 | 2 = body.kind === 2 ? 2 : 1;
+    const kind = body.kind === 2 ? 2 : 1;
     const title = clean(body.title);
     const url = clean(body.url);
-    const summary = clean(body.summary);
+    const content = clean(body.summary); // ✅ hybrid content
     const sourceName = clean(body.sourceName);
-    const category = clean(body.category);
 
     if (!title || !url) {
       return NextResponse.json({ error: "Missing title or url" }, { status: 400 });
-    }
-
-    // ✅ STRICT RULE:
-    // ForeignNews videos MUST use YouTube captions/transcript (sent in `summary`)
-    if (kind === 2 && category === "ForeignNews" && !summary) {
-      return NextResponse.json(
-        { error: "ForeignNews videos require YouTube captions/transcript." },
-        { status: 400 }
-      );
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
@@ -50,7 +38,6 @@ export async function POST(req: Request) {
     const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
     const client = new OpenAI({ apiKey });
 
-    // ✅ Keep your prompt as-is (only tiny enhancement: include category + rename Description -> Content)
     const input = `
 You are a highly intelligent Somali investigative journalist and analyst.
 
@@ -76,16 +63,14 @@ STRICT RULES:
 - If it is social, explain consequences.
 - Make it rich, informative, and intelligent.
 
-You may use logical reasoning and contextual knowledge to enrich the explanation.
-
 News Data:
+Type: ${kind === 2 ? "YouTube Video" : "Article/RSS"}
 Title: ${title}
 Source: ${sourceName}
-Category: ${category}
 URL: ${url}
-Content: ${summary}
+Content: ${content || title}
 
-Now produce the summary.
+Now produce the Somali summary.
 `.trim();
 
     const resp = await client.responses.create({
@@ -95,14 +80,10 @@ Now produce the summary.
     });
 
     const text = (resp.output_text || "").trim();
-
     return NextResponse.json({ summary: text || "Ma helin soo koobid (AI)." });
   } catch (e: any) {
     return NextResponse.json(
-      {
-        error: "OpenAI request failed",
-        details: e?.message ?? String(e),
-      },
+      { error: "OpenAI request failed", details: e?.message ?? String(e) },
       { status: 500 }
     );
   }
