@@ -1,7 +1,6 @@
 // ==============================
 // File: wargal-web/app/components/news/FilteredNewsGrid.tsx
-// ✅ Adds AI button + AI modal (auto-run) for grid items + modal header
-// ✅ Keeps existing modal + related videos layout
+// ✅ FIX: stop AI auto-regenerating (remove nowTick from runKey usage)
 // ==============================
 "use client";
 
@@ -39,8 +38,8 @@ type Props = {
   getCategory?: (sourceId?: string | null) => string;
   pageSize?: number;
 
-  // Optional: if you want parent to also know what was opened
   onOpen?: (it: NewsItem) => void;
+  onOpenAi?: (it: NewsItem) => void;
 };
 
 function clean(s?: string | null) {
@@ -163,18 +162,18 @@ export default function FilteredNewsGrid({
   getCategory,
   pageSize = 60,
   onOpen,
+  onOpenAi,
 }: Props) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
-  // Reader modal state (inside this component)
+  const externalControl = typeof onOpen === "function";
+
   const [openItem, setOpenItem] = useState<NewsItem | null>(null);
 
-  // AI modal state
   const [aiOpen, setAiOpen] = useState(false);
   const closeAi = () => setAiOpen(false);
 
-  // Pagination
   const [visibleCount, setVisibleCount] = useState<number>(pageSize);
 
   // ✅ Force “time ago” updates (every 60s)
@@ -191,11 +190,9 @@ export default function FilteredNewsGrid({
 
   const list = useMemo(() => (initialItems ?? []).filter(Boolean), [initialItems]);
 
-  // original item URL (watch/article)
   const modalUrl = useMemo(() => safeUrl(openItem?.url), [openItem]);
   const isVideo = openItem?.kind === 2;
 
-  // YouTube embed for kind=2
   const ytId = useMemo(() => {
     const u = safeUrl(openItem?.url);
     if (!u) return null;
@@ -207,7 +204,6 @@ export default function FilteredNewsGrid({
     return `https://www.youtube.com/embed/${ytId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`;
   }, [ytId]);
 
-  // The iframe src we actually render
   const iframeSrc = useMemo(() => {
     if (!modalUrl) return "";
     if (isVideo && youtubeEmbedSrc) return youtubeEmbedSrc;
@@ -246,18 +242,51 @@ export default function FilteredNewsGrid({
   const closeReader = () => setOpenItem(null);
 
   const openReader = (it: NewsItem) => {
+    if (externalControl) {
+      onOpen?.(it);
+      return;
+    }
     setOpenItem(it);
-    onOpen?.(it);
   };
 
   const openAiFor = (it: NewsItem) => {
-    setOpenItem(it);      // ensure AI knows which item
-    setAiOpen(true);      // open AI directly (no steps)
+    if (externalControl) {
+      if (onOpenAi) return onOpenAi(it);
+      onOpen?.(it);
+      return;
+    }
+    setOpenItem(it);
+    setAiOpen(true);
   };
 
+
+  const canUseAi = (it?: NewsItem | null) => {
+  if (!it) return false;
+
+  const kind = it.kind;
+
+  // ✅ type1 RSS only: must have summary
+  if (kind === 1) return !!clean((it as any)?.summary);
+
+  // ✅ type2 videos only if category is ForeignNews
+  if (kind === 2) {
+    const sid = it?.sourceId ? String(it.sourceId) : "";
+    const cat =
+      (getCategory ? clean(getCategory(sid)) : "") ||
+      clean((it as any)?.sourceCategory);
+
+    return cat === "ForeignNews";
+  }
+
+  return false;
+};
+  // ✅ stable AI runKey (NO nowTick)
+  const aiRunKey = useMemo(() => {
+    const k = clean(openItem?.id) || clean(openItem?.url) || "x";
+    return `${k}-ai-open`;
+  }, [openItem, aiOpen]);
+
   const aiKind: 1 | 2 = openItem?.kind === 2 ? 2 : 1;
-  const aiRunKey =
-    `${clean(openItem?.id) || clean(openItem?.url) || "x"}-${nowTick}-${aiOpen ? "open" : "closed"}`;
 
   const relatedVideos = useMemo(() => {
     if (!openItem) return [] as NewsItem[];
@@ -420,27 +449,28 @@ export default function FilteredNewsGrid({
                 position: "relative",
               }}
             >
-              {/* ✅ AI button on card (top-right) */}
-              <Chip
-                icon={<AutoAwesomeIcon />}
-                label="AI"
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openAiFor(it);
-                }}
-                sx={{
-                  position: "absolute",
-                  top: 10,
-                  right: 10,
-                  fontWeight: 900,
-                  borderRadius: 999,
-                  bgcolor: "common.white",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  "&:hover": { bgcolor: "grey.50" },
-                }}
-              />
+{canUseAi(it) && (
+  <Chip
+    icon={<AutoAwesomeIcon />}
+    label="AI"
+    size="small"
+    onClick={(e) => {
+      e.stopPropagation();
+      openAiFor(it);
+    }}
+    sx={{
+      position: "absolute",
+      top: 10,
+      right: 10,
+      fontWeight: 900,
+      borderRadius: 999,
+      bgcolor: "common.white",
+      border: "1px solid",
+      borderColor: "divider",
+      "&:hover": { bgcolor: "grey.50" },
+    }}
+  />
+)}
 
               <Box
                 sx={{
@@ -492,181 +522,192 @@ export default function FilteredNewsGrid({
         ) : null}
       </Box>
 
-      {/* Reader Modal */}
-      <Dialog
-        open={!!openItem && !aiOpen}
-        onClose={closeReader}
-        fullWidth
-        maxWidth={false}
-        PaperProps={{
-          sx: {
-            borderRadius: { xs: 3, sm: 3 },
-            m: { xs: 2, sm: 2 },
-            width: { xs: "92vw", sm: "min(1180px, 96vw)" },
-            maxWidth: "100%",
-            height: { xs: "auto", sm: "min(82vh, 820px)" },
-            maxHeight: { xs: "92vh", sm: "82vh" },
-            overflow: "hidden",
-          },
-        }}
-      >
-        <DialogTitle sx={{ fontWeight: 950, pr: 6, px: { xs: 2, sm: 3 } }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography fontWeight={950} sx={{ flex: 1, minWidth: 0 }} noWrap>
-              {clean(openItem?.title) || "Read"}
-            </Typography>
-
-            {/* ✅ AI button in modal header */}
-            {!!openItem && (
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<AutoAwesomeIcon />}
-                onClick={() => openAiFor(openItem)}
-                sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
-              >
-                Soo koob (AI)
-              </Button>
-            )}
-
-            <IconButton onClick={closeReader} aria-label="Close reader">
-              <CloseIcon />
-            </IconButton>
-          </Box>
-
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-            <Avatar src={openItem?.sourceIconUrl ?? undefined} sx={{ width: 22, height: 22 }}>
-              {(clean(openItem?.sourceName)?.[0] ?? "S").toUpperCase()}
-            </Avatar>
-
-            <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
-              {clean(openItem?.sourceName) || "Source"}
-            </Typography>
-
-            <Box sx={{ flex: 1 }} />
-
-            {!!clean(openItem?.publishedAt) && (
-              <TimeAgo
-                key={`${clean(openItem?.id) || clean(openItem?.url)}-${nowTick}`}
-                iso={openItem?.publishedAt}
-                variant="caption"
-                sx={{ color: "text.secondary", fontWeight: 900 }}
-              />
-            )}
-          </Stack>
-        </DialogTitle>
-
-        <DialogContent
-          sx={{
-            p: 0,
-            overflow: "hidden",
-            height: { xs: "auto", sm: "calc(100% - 96px)" },
+      {/* Reader Modal (ONLY when FilteredNewsGrid controls the modal itself) */}
+      {!externalControl && (
+        <Dialog
+          open={!!openItem && !aiOpen}
+          onClose={closeReader}
+          fullWidth
+          maxWidth={false}
+          PaperProps={{
+            sx: {
+              borderRadius: { xs: 3, sm: 3 },
+              m: { xs: 2, sm: 2 },
+              width: { xs: "92vw", sm: "min(1180px, 96vw)" },
+              maxWidth: "100%",
+              height: { xs: "auto", sm: "min(82vh, 820px)" },
+              maxHeight: { xs: "92vh", sm: "82vh" },
+              overflow: "hidden",
+            },
           }}
         >
-          {!iframeSrc ? (
-            <Box sx={{ p: 3 }}>
-              <Typography fontWeight={950} fontSize={16}>
-                This item can’t be opened in the modal
-              </Typography>
-              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                The feed item URL is missing or not a valid absolute URL.
+          <DialogTitle sx={{ fontWeight: 950, pr: 6, px: { xs: 2, sm: 3 } }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography fontWeight={950} sx={{ flex: 1, minWidth: 0 }} noWrap>
+                {clean(openItem?.title) || "Read"}
               </Typography>
 
-              {!!modalUrl && (
-                <Box sx={{ mt: 2 }}>
-                  <Button
-                    variant="contained"
-                    startIcon={<OpenInNewIcon />}
-                    onClick={() => window.open(modalUrl, "_blank", "noopener,noreferrer")}
-                    sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
-                  >
-                    Open in new tab
-                  </Button>
-                </Box>
+              {!!openItem && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<AutoAwesomeIcon />}
+                  onClick={() => openAiFor(openItem)}
+                  sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+                >
+                  Soo koob (AI)
+                </Button>
               )}
+
+              <IconButton onClick={closeReader} aria-label="Close reader">
+                <CloseIcon />
+              </IconButton>
             </Box>
-          ) : (
-            <Box
-              sx={{
-                height: { xs: "70vh", sm: "100%" },
-                minHeight: { xs: 420, sm: 520 },
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              {/* main content area + related videos */}
+
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+              <Avatar src={openItem?.sourceIconUrl ?? undefined} sx={{ width: 22, height: 22 }}>
+                {(clean(openItem?.sourceName)?.[0] ?? "S").toUpperCase()}
+              </Avatar>
+
+              <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
+                {clean(openItem?.sourceName) || "Source"}
+              </Typography>
+
+              <Box sx={{ flex: 1 }} />
+
+              {!!clean(openItem?.publishedAt) && (
+                <TimeAgo
+                  key={`${clean(openItem?.id) || clean(openItem?.url)}-${nowTick}`}
+                  iso={openItem?.publishedAt}
+                  variant="caption"
+                  sx={{ color: "text.secondary", fontWeight: 900 }}
+                />
+              )}
+            </Stack>
+          </DialogTitle>
+
+          <DialogContent
+            sx={{
+              p: 0,
+              overflow: "hidden",
+              height: { xs: "auto", sm: "calc(100% - 96px)" },
+            }}
+          >
+            {!iframeSrc ? (
+              <Box sx={{ p: 3 }}>
+                <Typography fontWeight={950} fontSize={16}>
+                  This item can’t be opened in the modal
+                </Typography>
+                <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                  The feed item URL is missing or not a valid absolute URL.
+                </Typography>
+
+                {!!modalUrl && (
+                  <Box sx={{ mt: 2 }}>
+                    <Button
+                      variant="contained"
+                      startIcon={<OpenInNewIcon />}
+                      onClick={() => window.open(modalUrl, "_blank", "noopener,noreferrer")}
+                      sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+                    >
+                      Open in new tab
+                    </Button>
+                  </Box>
+                )}
+              </Box>
+            ) : (
               <Box
                 sx={{
+                  height: { xs: "70vh", sm: "100%" },
+                  minHeight: { xs: 420, sm: 520 },
                   display: "flex",
-                  flex: 1,
-                  minHeight: 0,
-                  flexDirection: { xs: "column", md: "row" },
+                  flexDirection: "column",
                 }}
               >
-                {/* Left: iframe */}
-                <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, bgcolor: "common.white" }}>
-                  <Box
-                    component="iframe"
-                    src={iframeSrc}
-                    title={isVideo ? "YouTube video" : "Article"}
-                    allow={
-                      isVideo
-                        ? "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        : undefined
-                    }
-                    allowFullScreen={isVideo ? true : undefined}
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    sx={{ width: "100%", height: "100%", border: 0, bgcolor: "common.white" }}
-                  />
-                </Box>
-
-                {/* Right: related videos (desktop) */}
                 <Box
                   sx={{
-                    display: { xs: "none", md: "block" },
-                    width: 360,
-                    borderLeft: "1px solid",
-                    borderColor: "divider",
-                    bgcolor: "grey.50",
-                    overflow: "auto",
+                    display: "flex",
+                    flex: 1,
+                    minHeight: 0,
+                    flexDirection: { xs: "column", md: "row" },
                   }}
                 >
-                  {RelatedList}
-                </Box>
+                  <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, bgcolor: "common.white" }}>
+                    <Box
+                      component="iframe"
+                      src={iframeSrc}
+                      title={isVideo ? "YouTube video" : "Article"}
+                      allow={
+                        isVideo
+                          ? "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          : undefined
+                      }
+                      allowFullScreen={isVideo ? true : undefined}
+                      referrerPolicy="strict-origin-when-cross-origin"
+                      sx={{ width: "100%", height: "100%", border: 0, bgcolor: "common.white" }}
+                    />
+                  </Box>
 
-                {/* Mobile related videos (collapsible) */}
-                <Box sx={{ display: { xs: "block", md: "none" } }}>
-                  <Divider />
-                  <Box sx={{ px: 2, py: 1.25, bgcolor: "grey.50" }}>
-                    <Button
-                      fullWidth
-                      variant="outlined"
-                      onClick={() => setMobileRelatedOpen((v) => !v)}
-                      endIcon={mobileRelatedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                      sx={{
-                        textTransform: "none",
-                        fontWeight: 900,
-                        borderRadius: 999,
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      Related videos
-                    </Button>
+                  <Box
+                    sx={{
+                      display: { xs: "none", md: "block" },
+                      width: 360,
+                      borderLeft: "1px solid",
+                      borderColor: "divider",
+                      bgcolor: "grey.50",
+                      overflow: "auto",
+                    }}
+                  >
+                    {RelatedList}
+                  </Box>
 
-                    <Collapse in={mobileRelatedOpen} timeout={180}>
-                      <Box sx={{ mt: 1.25 }}>{RelatedList}</Box>
-                    </Collapse>
+                  <Box sx={{ display: { xs: "block", md: "none" } }}>
+                    <Divider />
+                    <Box sx={{ px: 2, py: 1.25, bgcolor: "grey.50" }}>
+                      <Button
+                        fullWidth
+                        variant="outlined"
+                        onClick={() => setMobileRelatedOpen((v) => !v)}
+                        endIcon={mobileRelatedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                        sx={{
+                          textTransform: "none",
+                          fontWeight: 900,
+                          borderRadius: 999,
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        Related videos
+                      </Button>
+
+                      <Collapse in={mobileRelatedOpen} timeout={180}>
+                        <Box sx={{ mt: 1.25 }}>{RelatedList}</Box>
+                      </Collapse>
+                    </Box>
                   </Box>
                 </Box>
               </Box>
-            </Box>
-          )}
+            )}
 
-          <Divider sx={{ display: { xs: "block", md: "none" } }} />
-        </DialogContent>
-      </Dialog>
+            <Divider sx={{ display: { xs: "block", md: "none" } }} />
+          </DialogContent>
+        </Dialog>
+      )}
 
-
+      {/* NOTE:
+         This component doesn’t render a separate AI modal currently (HomeShell does).
+         We still fixed runKey logic here so it won’t ever re-run due to nowTick.
+      */}
+      {false && aiOpen && openItem ? (
+        <AiSomaliSummary
+          kind={aiKind}
+          title={clean(openItem?.title)}
+          url={clean(openItem?.url)}
+          sourceName={clean(openItem?.sourceName)}
+          summary={clean((openItem as any)?.summary)}
+          autoRun
+          runKey={aiRunKey}
+        />
+      ) : null}
     </>
   );
 }

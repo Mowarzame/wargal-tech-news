@@ -6,10 +6,12 @@ import { NewsItem } from "@/app/types/news";
 import TimeAgo from "@/app/components/common/TimeAgo";
 import AiBadge from "../ai/AiBadge";
 
-
 type Props = {
   items: NewsItem[] | null | undefined;
   onOpen: (item: NewsItem) => void;
+
+  // ✅ NEW: so we can enforce ForeignNews for videos
+  getCategory?: (sourceId?: string | null) => string;
 };
 
 function clean(s?: string | null) {
@@ -25,8 +27,28 @@ function pickImage(it?: NewsItem | null) {
 
   return "/placeholder-news.jpg";
 }
-const showAi = true;
-export default function NewsGridHighlights({ items, onOpen }: Props) {
+
+// ✅ AI eligibility:
+// - kind=1 => must have summary
+// - kind=2 => only if category is ForeignNews
+function canShowAiBadge(it: NewsItem, getCategory?: (sourceId?: string | null) => string) {
+  const kind = it?.kind;
+
+  if (kind === 1) return !!clean((it as any)?.summary);
+
+  if (kind === 2) {
+    const sid = clean((it as any)?.sourceId);
+    const cat =
+      (getCategory ? clean(getCategory(sid)) : "") ||
+      clean((it as any)?.sourceCategory);
+
+    return cat === "ForeignNews";
+  }
+
+  return false;
+}
+
+export default function NewsGridHighlights({ items, onOpen, getCategory }: Props) {
   const list = (items ?? []).filter(Boolean);
   if (!list.length) return null;
 
@@ -42,6 +64,8 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
         const image = pickImage(item);
         const sourceIcon = clean(item?.sourceIconUrl) ? item!.sourceIconUrl! : undefined;
         const isVideo = item?.kind === 2;
+
+        const showAi = canShowAiBadge(item, getCategory);
 
         return (
           <Box
@@ -70,6 +94,8 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
                 display: "block",
               }}
             />
+
+            {/* ✅ AI badge ONLY when AI is allowed */}
             {showAi ? <AiBadge /> : null}
 
             <Box
@@ -100,73 +126,69 @@ export default function NewsGridHighlights({ items, onOpen }: Props) {
                 {clean(item?.title) || "(Untitled)"}
               </Typography>
 
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, minWidth: 0 }}>
+                <Avatar
+                  src={sourceIcon}
+                  alt={clean(item?.sourceName) || "Source"}
+                  sx={{
+                    width: { xs: 18, sm: 20, md: 22 },
+                    height: { xs: 18, sm: 20, md: 22 },
+                    bgcolor: "rgba(255,255,255,.25)",
+                    border: "1px solid rgba(255,255,255,.35)",
+                    flex: "0 0 auto",
+                  }}
+                >
+                  {!sourceIcon && clean(item?.sourceName)?.[0]}
+                </Avatar>
 
+                <Typography
+                  sx={{
+                    display: { xs: "none", md: "block" },
+                    color: "rgba(255,255,255,.88)",
+                    fontWeight: 850,
+                    fontSize: 11,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    minWidth: 0,
+                  }}
+                >
+                  {clean(item?.sourceName) || "Source"}
+                </Typography>
 
-<Box sx={{ display: "flex", alignItems: "center", gap: 0.8, minWidth: 0 }}>
-  {/* ✅ Always show responsive source icon (mobile + desktop) */}
-  <Avatar
-    src={sourceIcon}
-    alt={clean(item?.sourceName) || "Source"}
-    sx={{
-      width: { xs: 18, sm: 20, md: 22 },
-      height: { xs: 18, sm: 20, md: 22 },
-      bgcolor: "rgba(255,255,255,.25)",
-      border: "1px solid rgba(255,255,255,.35)",
-      flex: "0 0 auto",
-    }}
-  >
-    {!sourceIcon && clean(item?.sourceName)?.[0]}
-  </Avatar>
+                <Box sx={{ flex: 1 }} />
 
-  {/* Desktop: keep showing source name (UI remains same) */}
-  <Typography
-    sx={{
-      display: { xs: "none", md: "block" },
-      color: "rgba(255,255,255,.88)",
-      fontWeight: 850,
-      fontSize: 11,
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      whiteSpace: "nowrap",
-      minWidth: 0,
-    }}
-  >
-    {clean(item?.sourceName) || "Source"}
-  </Typography>
+                <TimeAgo
+                  iso={item?.publishedAt}
+                  variant="caption"
+                  sx={{ color: "rgba(255,255,255,.92)", fontWeight: 900, fontSize: { xs: 10, md: 11 } }}
+                />
 
-  <Box sx={{ flex: 1 }} />
-
-  <TimeAgo
-    iso={item?.publishedAt}
-    variant="caption"
-    sx={{ color: "rgba(255,255,255,.92)", fontWeight: 900, fontSize: { xs: 10, md: 11 } }}
-  />
-
-  {isVideo && (
-    <>
-      <PlayCircleFilledWhiteIcon
-        sx={{
-          display: { xs: "block", md: "none" },
-          fontSize: 16,
-          color: "white",
-          opacity: 0.95,
-          flex: "0 0 auto",
-        }}
-      />
-      <Chip
-        label="Video"
-        size="small"
-        color="error"
-        sx={{
-          display: { xs: "none", md: "inline-flex" },
-          height: 18,
-          ml: 0.25,
-          "& .MuiChip-label": { px: 0.6, fontSize: 9.5, fontWeight: 900 },
-        }}
-      />
-    </>
-  )}
-</Box>
+                {isVideo && (
+                  <>
+                    <PlayCircleFilledWhiteIcon
+                      sx={{
+                        display: { xs: "block", md: "none" },
+                        fontSize: 16,
+                        color: "white",
+                        opacity: 0.95,
+                        flex: "0 0 auto",
+                      }}
+                    />
+                    <Chip
+                      label="Video"
+                      size="small"
+                      color="error"
+                      sx={{
+                        display: { xs: "none", md: "inline-flex" },
+                        height: 18,
+                        ml: 0.25,
+                        "& .MuiChip-label": { px: 0.6, fontSize: 9.5, fontWeight: 900 },
+                      }}
+                    />
+                  </>
+                )}
+              </Box>
             </Box>
           </Box>
         );

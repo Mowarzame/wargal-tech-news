@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Box, Button, CircularProgress, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import { summarizeSomali } from "@/app/lib/ai";
 
 type Props = {
@@ -11,9 +11,10 @@ type Props = {
   summary?: string | null;
   sourceName?: string | null;
 
-  // ✅ new
+  // ✅ auto-run
   autoRun?: boolean;
   runKey?: string;
+  onLoadingChange?: (loading: boolean) => void;
 };
 
 export default function AiSomaliSummary({
@@ -24,30 +25,36 @@ export default function AiSomaliSummary({
   sourceName,
   autoRun = false,
   runKey,
+  onLoadingChange
 }: Props) {
   const [loading, setLoading] = useState(false);
+
+  // ✅ Keep text visible while loading (do NOT clear it)
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
 
+  // ✅ Prevent repeat auto-runs for same item
   const ranRef = useRef<string>("");
 
   const run = async () => {
     if (loading) return;
+
     setLoading(true);
+    onLoadingChange?.(true);
     setErr("");
-    setText("");
 
     try {
       const r = await summarizeSomali({ kind, title, url, summary, sourceName });
-      setText(r.summary);
+      setText((r?.summary ?? "").trim());
     } catch (e: any) {
       setErr(e?.message ?? "Error");
     } finally {
       setLoading(false);
+      onLoadingChange?.(false);
     }
   };
 
-  // ✅ auto-generate when modal opens / item changes
+  // ✅ auto-generate ONLY once per runKey (or per stable fallback key)
   useEffect(() => {
     if (!autoRun) return;
 
@@ -60,7 +67,7 @@ export default function AiSomaliSummary({
   }, [autoRun, runKey, kind, title, url]);
 
   return (
-    <Box sx={{ mt: 1 }}>
+    <Box sx={{ mt: 0 }}>
       {/* Manual trigger (still available) */}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
         <Button
@@ -68,11 +75,11 @@ export default function AiSomaliSummary({
           size="small"
           onClick={run}
           disabled={loading}
-          sx={{ textTransform: "none", fontWeight: 900 }}
+          sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
         >
-          {loading ? "AI..." : "Soo koob (AI)"}
+          {/* ✅ No spinner + no "AI..." label */}
+          Soo koob (AI)
         </Button>
-        {loading && <CircularProgress size={18} />}
       </Box>
 
       {err && (

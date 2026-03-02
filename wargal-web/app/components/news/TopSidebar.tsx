@@ -8,6 +8,9 @@ type Props = {
   title: string;
   items: NewsItem[] | null | undefined;
   onOpen: (it: NewsItem) => void;
+
+  // ✅ NEW: category resolver so we can enforce ForeignNews rule for videos
+  getCategory?: (sourceId?: string | null) => string;
 };
 
 function clean(s?: string | null) {
@@ -53,10 +56,27 @@ function timeAgoFromIso(iso?: string | null) {
   return `${mo}mo ago`;
 }
 
-export default function TopSideBar({ title, items, onOpen }: Props) {
-  // ✅ Always cap to 5 items for Latest (and safe for reuse)
+export default function TopSideBar({ title, items, onOpen, getCategory }: Props) {
   const list = (items ?? []).filter(Boolean).slice(0, 5);
   if (!list.length) return null;
+
+  // ✅ Eligibility rule:
+  // - kind=1 requires summary
+  // - kind=2 allowed only if category is ForeignNews
+  const canUseAi = (it?: NewsItem | null) => {
+    if (!it) return false;
+
+    const kind = (it as any)?.kind;
+    if (kind === 1) return !!clean((it as any)?.summary);
+
+    if (kind === 2) {
+      const sid = clean((it as any)?.sourceId);
+      const cat = clean(getCategory ? getCategory(sid) : clean((it as any)?.sourceCategory));
+      return cat === "ForeignNews";
+    }
+
+    return false;
+  };
 
   return (
     <Box
@@ -80,7 +100,7 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
           const sourceIcon = clean(it?.sourceIconUrl);
           const ago = timeAgoFromIso(it?.publishedAt);
 
-          const hasAi = !!clean((it as any)?.summary);
+          const showAiBadge = canUseAi(it);
 
           return (
             <Box key={clean(it?.id) || `${idx}`}>
@@ -96,7 +116,7 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   "&:hover": { bgcolor: "grey.50" },
                 }}
               >
-                {/* Left thumb + ✅ AI badge overlay */}
+                {/* Left thumb */}
                 <Box
                   sx={{
                     width: 54,
@@ -112,32 +132,7 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                     position: "relative",
                     overflow: "hidden",
                   }}
-                >
-                  {hasAi && (
-                    <Box
-                      sx={{
-                        position: "absolute",
-                        top: 6,
-                        right: 6,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 0.35,
-                        px: 0.65,
-                        py: 0.25,
-                        borderRadius: 999,
-                        bgcolor: "rgba(255,255,255,0.92)",
-                        border: "1px solid rgba(0,0,0,0.08)",
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.10)",
-                        lineHeight: 1,
-                      }}
-                    >
-                      <AutoAwesomeIcon sx={{ fontSize: 12 }} />
-                      <Typography sx={{ fontSize: 10, fontWeight: 900, lineHeight: 1 }}>
-                        AI
-                      </Typography>
-                    </Box>
-                  )}
-                </Box>
+                />
 
                 {/* Middle text */}
                 <Box sx={{ minWidth: 0, flex: 1 }}>
@@ -185,19 +180,50 @@ export default function TopSideBar({ title, items, onOpen }: Props) {
                   )}
                 </Box>
 
-                {/* Right: source icon */}
-                <Avatar
-                  src={sourceIcon ? sourceIcon : undefined}
+                {/* Right: source icon + AI badge below */}
+                <Box
                   sx={{
-                    width: 28,
-                    height: 28,
                     flexShrink: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 0.5,
                     mt: 0.25,
-                    border: "1px solid rgba(0,0,0,0.06)",
                   }}
                 >
-                  {(clean(it?.sourceName)?.[0] ?? "S").toUpperCase()}
-                </Avatar>
+                  <Avatar
+                    src={sourceIcon ? sourceIcon : undefined}
+                    sx={{
+                      width: 28,
+                      height: 28,
+                      border: "1px solid rgba(0,0,0,0.06)",
+                    }}
+                  >
+                    {(clean(it?.sourceName)?.[0] ?? "S").toUpperCase()}
+                  </Avatar>
+
+                  {showAiBadge && (
+                    <Box
+                      sx={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.35,
+                        px: 0.7,
+                        py: 0.2,
+                        borderRadius: 999,
+                        bgcolor: "rgba(255,255,255,0.92)",
+                        border: "1px solid rgba(0,0,0,0.10)",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.10)",
+                        lineHeight: 1,
+                      }}
+                    >
+                      <AutoAwesomeIcon sx={{ fontSize: 12 }} />
+                      <Typography sx={{ fontSize: 10, fontWeight: 900, lineHeight: 1 }}>
+                        AI
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
               </Box>
 
               {idx !== list.length - 1 && <Divider />}

@@ -1,12 +1,9 @@
 // ==============================
 // File: wargal-web/app/components/Home/HomeShell.tsx
-// ✅ UPDATED (FIX):
-//    - The dropdown you were clicking (Breaking header) was hard-locked to "News".
-//    - Now Breaking/Highlights/Latest/More/All News are controlled by a REAL selected category.
-//    - Sources panel still filters sources by category + selected sources.
-//    - Category lanes show everything EXCEPT the currently selected global category.
-// ✅ Auto-refresh merges newest items on top (1 min + tab-return refresh)
-// ✅ “time ago” updates every 60s + on refresh
+// ✅ UPDATED (AI UX FIXES):
+// - AI modal fixed height + scrollable
+// - No spinner logic handled in AiSomaliSummary
+// - STOP auto-regenerating: runKey no longer depends on nowTick
 // ==============================
 "use client";
 
@@ -31,6 +28,7 @@ import {
   Stack,
   useMediaQuery,
   Collapse,
+  Paper,
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -52,6 +50,8 @@ import FilteredNewsGrid from "@/app/components/news/FilteredNewsGrid";
 import TimeAgo from "@/app/components/common/TimeAgo";
 import AiSomaliSummary from "@/app/components/ai/AiSomaliSummary";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import {DraggablePaper} from "../../components/ai/DraggablePaper";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 
 const REFRESH_MS = 60 * 1000;
 const MIN_GAP_MS = 8 * 1000;
@@ -382,12 +382,12 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const [allSources, setAllSources] = useState<NewsSource[]>(
     (sources ?? []).filter(Boolean).filter((s) => (s as any).isActive !== false)
   );
+  const [aiLoading, setAiLoading] = useState(false);
 
   const [q, setQ] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sourceCategory, setSourceCategory] = useState<string>("All");
 
-  // ✅ Global sections are controlled by a REAL selected category (default "News")
   const DEFAULT_GLOBAL_CATEGORY = "News";
   const [globalCategory, setGlobalCategory] = useState<string>(DEFAULT_GLOBAL_CATEGORY);
 
@@ -396,14 +396,11 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [openItem, setOpenItem] = useState<NewsItem | null>(null);
 
-  // ✅ Force “time ago” updates (every 60s + on refresh)
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
-  // ✅ Auto-refresh guards
   const lastRefreshAtRef = useRef<number>(0);
   const refreshingRef = useRef<boolean>(false);
 
-  // ✅ Mobile related collapsible
   const [mobileRelatedOpen, setMobileRelatedOpen] = useState(false);
   useEffect(() => {
     if (isMobile) setMobileRelatedOpen(false);
@@ -414,27 +411,20 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     return () => clearInterval(id);
   }, []);
 
-  // ✅ Robust category resolver:
-  // 1) categoryBySourceId (authoritative if present)
-  // 2) sources list
-  // 3) fallback "News"
-const getCategoryForSource = (sourceId?: string | null) => {
-  const sid = String(sourceId ?? "");
-  const fromMap = clean(categoryBySourceId?.[sid]);
-  if (fromMap) return fromMap;
+  const getCategoryForSource = (sourceId?: string | null) => {
+    const sid = String(sourceId ?? "");
+    const fromMap = clean(categoryBySourceId?.[sid]);
+    if (fromMap) return fromMap;
 
-  const src = (allSources ?? []).find((s) => String((s as any).id) === sid);
-  const fromSource = clean((src as any)?.category);
-  return fromSource || "News";
-};
+    const src = (allSources ?? []).find((s) => String((s as any).id) === sid);
+    const fromSource = clean((src as any)?.category);
+    return fromSource || "News";
+  };
 
   const selectedSet = useMemo(() => new Set((selectedIds ?? []).map(String)), [selectedIds]);
   const isAllSources = selectedIds.length === 0;
   const isSingleSource = selectedIds.length === 1;
 
-  // ✅ Build category list for BOTH menus:
-  // - SourcesPanel menu includes "All"
-  // - Breaking menu uses same list but excludes "All"
   const sourceCategories = useMemo(() => {
     const set = new Set<string>();
 
@@ -459,7 +449,6 @@ const getCategoryForSource = (sourceId?: string | null) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceCategories.join("|")]);
 
-  // ✅ Also keep globalCategory valid (in case data changes)
   useEffect(() => {
     const globals = sourceCategories.filter((c) => c !== "All");
     if (!globals.includes(globalCategory)) {
@@ -468,7 +457,6 @@ const getCategoryForSource = (sourceId?: string | null) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceCategories.join("|")]);
 
-  // ✅ Sources-side category (in SourcesPanel) -> determines which source IDs are allowed
   const allowedSourceIdSet = useMemo(() => {
     if (sourceCategory === "All") return null;
 
@@ -497,7 +485,6 @@ const getCategoryForSource = (sourceId?: string | null) => {
     return byCat.filter((s) => clean((s as any).name).toLowerCase().includes(query));
   }, [allSources, q, sourceCategory, categoryBySourceId]);
 
-  // ✅ Auto refresh (1 minute) + tab-return refresh
   useEffect(() => {
     let alive = true;
 
@@ -524,8 +511,6 @@ const getCategoryForSource = (sourceId?: string | null) => {
         }
 
         setAllItems((prev) => mergeTop(prev ?? [], (feed ?? []).filter(Boolean)));
-
-        // ✅ bump relative times
         setNowTick(Date.now());
       } finally {
         refreshingRef.current = false;
@@ -553,7 +538,6 @@ const getCategoryForSource = (sourceId?: string | null) => {
     };
   }, []);
 
-  // ✅ Step 1: apply Sources filters to items (sourceCategory + selectedIds)
   const itemsAfterSourceFilters = useMemo(() => {
     const list = (allItems ?? []).filter(Boolean);
 
@@ -574,24 +558,20 @@ const getCategoryForSource = (sourceId?: string | null) => {
     });
   }, [allItems, allowedSourceIdSet, isAllSources, selectedSet]);
 
-  // ✅ Step 2: sort newest-first (all categories)
   const sortedAll = useMemo(() => {
     const list = [...itemsAfterSourceFilters];
     list.sort((a, b) => clean((b as any)?.publishedAt).localeCompare(clean((a as any)?.publishedAt)));
     return list;
   }, [itemsAfterSourceFilters]);
 
-  // ✅ Global universe = ONLY the selected globalCategory
   const sortedGlobalOnly = useMemo(() => {
     return sortedAll.filter((it) => getCategoryForSource((it as any)?.sourceId) === globalCategory);
   }, [sortedAll, globalCategory, categoryBySourceId, allSources]);
 
-  // ✅ Category lanes show everything EXCEPT the selected global category
   const lanesItems = useMemo(() => {
     return sortedAll.filter((it) => getCategoryForSource((it as any)?.sourceId) !== globalCategory);
   }, [sortedAll, globalCategory, categoryBySourceId, allSources]);
 
-  // ✅ NOW every GLOBAL section uses sortedGlobalOnly
   const breakingItems = useMemo(() => {
     const out: NewsItem[] = [];
     const seen = new Set<string>();
@@ -621,8 +601,6 @@ const getCategoryForSource = (sourceId?: string | null) => {
   }, [sortedGlobalOnly]);
 
   const moreStories = useMemo(() => sortedGlobalOnly.slice(6, 30), [sortedGlobalOnly]);
-
-  // ✅ All News grid initial items = global category feed
   const allNewsInitial = useMemo(() => sortedGlobalOnly, [sortedGlobalOnly]);
 
   const emptySingleSource =
@@ -670,7 +648,6 @@ const getCategoryForSource = (sourceId?: string | null) => {
     const baseUrl = clean((openItem as any)?.url);
     const baseId = clean((openItem as any)?.id);
 
-    // ✅ related search stays within the selected global category universe
     const candidates = (sortedGlobalOnly ?? [])
       .filter(Boolean)
       .filter((it) => (it as any)?.kind === 2)
@@ -715,7 +692,6 @@ const getCategoryForSource = (sourceId?: string | null) => {
     return out;
   }, [openItem, sortedGlobalOnly]);
 
-  // ✅ Article embed-block detection
   const articleIframeRef = useRef<HTMLIFrameElement | null>(null);
   const [articleEmbedBlocked, setArticleEmbedBlocked] = useState(false);
   const [articleIframeReady, setArticleIframeReady] = useState(false);
@@ -776,9 +752,30 @@ const getCategoryForSource = (sourceId?: string | null) => {
 
   const [aiOpen, setAiOpen] = useState(false);
 
-const aiKind: 1 | 2 = (openItem as any)?.kind === 2 ? 2 : 1;
-const showAi = true;
-const closeAi = () => setAiOpen(false);
+  const aiKind: 1 | 2 = (openItem as any)?.kind === 2 ? 2 : 1;
+  const closeAi = () => setAiOpen(false);
+
+  // ✅ CRITICAL FIX: stable runKey (no nowTick)
+  const aiRunKey = useMemo(() => {
+    const k = clean((openItem as any)?.id) || clean((openItem as any)?.url) || "x";
+    return `${k}-ai-open`;
+  }, [openItem, aiOpen]);
+const canUseAiForItem = (it?: NewsItem | null) => {
+  if (!it) return false;
+
+  const kind = (it as any)?.kind;
+
+  if (kind === 1) return !!clean((it as any)?.summary);
+
+  if (kind === 2) {
+    const sid = clean((it as any)?.sourceId);
+    const cat = clean(getCategoryForSource(sid));
+    return cat === "ForeignNews";
+  }
+
+  return false;
+};
+
 
   return (
     <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }} data-nowtick={nowTick}>
@@ -986,7 +983,12 @@ const closeAi = () => setAiOpen(false);
                 <NewsGridHighlights items={highlightItems} onOpen={(it) => onOpen(it)} />
 
                 <Box sx={{ mt: 2, display: { xs: "block", lg: "none" } }}>
-                  <TopSideBar title="Latest" items={latestItems} onOpen={(it) => onOpen(it)} />
+   <TopSideBar
+  title="Latest"
+  items={latestItems}
+  onOpen={(it) => onOpen(it)}
+  getCategory={(sid) => getCategoryForSource(String(sid ?? ""))}
+/>
                 </Box>
 
                 <Box sx={{ display: { xs: "none", lg: "block" } }}>
@@ -1008,14 +1010,19 @@ const closeAi = () => setAiOpen(false);
                 <Typography variant="h6" fontWeight={900} sx={{ mt: 2, mb: 1 }}>
                   All News
                 </Typography>
-            <FilteredNewsGrid
-          selectedSourceIds={selectedIds}
-          initialItems={allNewsInitial}
-          pageSize={60}
-          selectedCategory={globalCategory}
-          getCategory={(sourceId) => getCategoryForSource(String(sourceId ?? ""))}
-        onOpen={(it: NewsItem) => onOpen(it)}
-        />
+
+      <FilteredNewsGrid
+  selectedSourceIds={selectedIds}
+  initialItems={allNewsInitial}
+  pageSize={60}
+  selectedCategory={globalCategory}
+  getCategory={(sourceId) => getCategoryForSource(String(sourceId ?? ""))}
+  onOpen={(it: NewsItem) => onOpen(it)}
+  onOpenAi={(it: NewsItem) => {
+    setOpenItem(it);
+    if (canUseAiForItem(it)) setAiOpen(true);
+  }}
+/>
               </>
             )}
           </Box>
@@ -1029,7 +1036,12 @@ const closeAi = () => setAiOpen(false);
               display: { xs: "none", lg: "block" },
             }}
           >
-            <TopSideBar title="Latest" items={latestItems} onOpen={(it) => onOpen(it)} />
+<TopSideBar
+  title="Latest"
+  items={latestItems}
+  onOpen={(it) => onOpen(it)}
+  getCategory={(sid) => getCategoryForSource(String(sid ?? ""))}
+/>
           </Box>
         </Box>
 
@@ -1042,7 +1054,7 @@ const closeAi = () => setAiOpen(false);
         </Box>
       </Box>
 
-      {/* ✅ Modal */}
+      {/* ✅ Modal (unchanged) */}
       <Dialog
         open={!!openItem}
         onClose={closeModal}
@@ -1060,6 +1072,7 @@ const closeAi = () => setAiOpen(false);
           },
         }}
       >
+
         <DialogTitle sx={{ fontWeight: 950, pr: 6, px: { xs: 2, sm: 3 } }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Typography fontWeight={950} sx={{ flex: 1, minWidth: 0 }} noWrap>
@@ -1094,9 +1107,10 @@ const closeAi = () => setAiOpen(false);
   size="small"
   variant="outlined"
   startIcon={<AutoAwesomeIcon />}
-  disabled={!openItem}
+  disabled={!openItem || !canUseAiForItem(openItem)}
   onClick={() => {
     if (!openItem) return;
+    if (!canUseAiForItem(openItem)) return;
     setAiOpen(true);
   }}
   sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
@@ -1554,41 +1568,152 @@ const closeAi = () => setAiOpen(false);
         </DialogContent>
       </Dialog>
 
- {/* ✅ AI Summary Modal */}
+{/* ✅ AI Summary Modal (DRAGGABLE) */}
 <Dialog
   open={aiOpen}
   onClose={closeAi}
-  fullWidth
-  maxWidth="sm"
-  PaperProps={{ sx: { borderRadius: 3 } }}
+  PaperComponent={DraggablePaper}
+  aria-labelledby="ai-summary-dialog-title"
+  hideBackdrop
+  disableScrollLock
+  disableEnforceFocus
+  disableAutoFocus
+  fullWidth={false}
+  maxWidth={false}
+  PaperProps={{
+    sx: {
+      borderRadius: 3,
+      width: { xs: "92vw", sm: 520 },
+      maxWidth: "96vw",
+      height: { xs: "62vh", sm: 520 },
+      maxHeight: "78vh",
+      overflow: "hidden",
+      position: "fixed",
+      top: { xs: 86, sm: 96 },
+      right: { xs: 12, sm: 20 },
+      m: 0,
+      boxShadow: 6,
+    },
+  }}
 >
-  <DialogTitle sx={{ fontWeight: 950, display: "flex", alignItems: "center", gap: 1 }}>
-    <AutoAwesomeIcon fontSize="small" />
-    <Box sx={{ flex: 1 }}>Soo koobid (AI)</Box>
+  {/* ✅ Drag handle = DialogTitle */}
+<DialogTitle
+  id="ai-summary-dialog-title"
+  sx={{
+    fontWeight: 950,
+    display: "flex",
+    alignItems: "center",
+    gap: 1,
+    cursor: "move",
+    userSelect: "none",
+    pr: 1,
+  }}
+>
+  <AutoAwesomeIcon fontSize="small" />
 
-    <IconButton onClick={closeAi} aria-label="Close AI summary">
-      <CloseIcon />
-    </IconButton>
-  </DialogTitle>
+  <Box sx={{ flex: 1, minWidth: 0 }}>
+    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
+      <Typography fontWeight={950} noWrap sx={{ lineHeight: 1.1 }}>
+        Soo koobid (AI)
+      </Typography>
 
-  <DialogContent sx={{ pt: 1.5 }}>
-{openItem ? (
-  <AiSomaliSummary
-    kind={aiKind}
-    title={clean((openItem as any)?.title)}
-    url={clean((openItem as any)?.url)}
-    sourceName={clean((openItem as any)?.sourceName)}
-      summary={clean((openItem as any)?.summary)}   // ✅ IMPORTANT
-    autoRun={true}
-    runKey={`${clean((openItem as any)?.id) || clean((openItem as any)?.url) || "x"}-${nowTick}`}
-  />
-) : (
-  <Typography variant="body2" color="text.secondary">
-    No item selected.
-  </Typography>
-)}
+      {/* ✅ draggable indicator icon */}
+      <DragIndicatorIcon sx={{ fontSize: 16, opacity: 0.65 }} />
+    </Box>
+
+    {/* ✅ subtle hint text */}
+    <Typography variant="caption" sx={{ opacity: 0.65, fontWeight: 800, lineHeight: 1.1 }}>
+      Drag this header to move
+    </Typography>
+  </Box>
+
+  <IconButton onClick={closeAi} aria-label="Close AI summary">
+    <CloseIcon />
+  </IconButton>
+</DialogTitle>
+
+  <DialogContent
+    sx={{
+      pt: 1.5,
+      overflow: "hidden",
+      height: "calc(100% - 64px)",
+      position: "relative",
+    }}
+  >
+    {/* ✅ Scroll container */}
+    <Box sx={{ height: "100%", overflow: "auto", pr: 0.5 }}>
+      {openItem ? (
+        <AiSomaliSummary
+          kind={aiKind}
+          title={clean((openItem as any)?.title)}
+          url={clean((openItem as any)?.url)}
+          sourceName={clean((openItem as any)?.sourceName)}
+          summary={clean((openItem as any)?.summary)}
+          autoRun={true}
+          runKey={aiRunKey}
+          onLoadingChange={(v: boolean) => setAiLoading(v)}
+        />
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          No item selected.
+        </Typography>
+      )}
+    </Box>
+
+    {/* ✅ Loading overlay inside modal */}
+    {aiLoading ? (
+      <Box
+        sx={{
+          position: "absolute",
+          inset: 0,
+          bgcolor: "rgba(255,255,255,0.82)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 5,
+          p: 2,
+        }}
+      >
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 1.25,
+            borderRadius: 2,
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "common.white",
+            px: 2.5,
+            py: 2,
+            boxShadow: 2,
+          }}
+        >
+          <Box
+            sx={{
+              width: 22,
+              height: 22,
+              borderRadius: "50%",
+              border: "3px solid",
+              borderColor: "divider",
+              borderTopColor: "text.primary",
+              animation: "wargalSpin 0.9s linear infinite",
+              "@keyframes wargalSpin": {
+                "0%": { transform: "rotate(0deg)" },
+                "100%": { transform: "rotate(360deg)" },
+              },
+            }}
+          />
+          <Typography sx={{ fontWeight: 900 }}>Generating the summary…</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>
+            Please wait a moment.
+          </Typography>
+        </Box>
+      </Box>
+    ) : null}
   </DialogContent>
 </Dialog>
+
     </Box>
   );
 }

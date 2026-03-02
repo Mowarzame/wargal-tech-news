@@ -1,6 +1,3 @@
-// ==============================
-// File: wargal-web/app/components/breaking/BreakingSlideshow.tsx
-// ==============================
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -10,12 +7,14 @@ import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 import FlashOnIcon from "@mui/icons-material/FlashOn";
 import { NewsItem } from "@/app/types/news";
 import TimeAgo from "@/app/components/common/TimeAgo";
-import AiBadge from "../ai/AiBadge";
 
 type Props = {
   items: NewsItem[] | null | undefined;
   onOpen: (item: NewsItem) => void;
   intervalMs?: number;
+
+  // ✅ NEW: enforce ForeignNews for videos
+  getCategory?: (sourceId?: string | null) => string;
 };
 
 function clean(s?: string | null) {
@@ -32,7 +31,24 @@ function pickImage(it?: NewsItem | null) {
   return "/placeholder-news.jpg";
 }
 
-export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: Props) {
+function canShowAiBadge(it: NewsItem, getCategory?: (sourceId?: string | null) => string) {
+  const kind = it?.kind;
+
+  if (kind === 1) return !!clean((it as any)?.summary);
+
+  if (kind === 2) {
+    const sid = clean((it as any)?.sourceId);
+    const cat =
+      (getCategory ? clean(getCategory(sid)) : "") ||
+      clean((it as any)?.sourceCategory);
+
+    return cat === "ForeignNews";
+  }
+
+  return false;
+}
+
+export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500, getCategory }: Props) {
   const safeItems = useMemo(() => (items ?? []).filter(Boolean), [items]);
   const [index, setIndex] = useState(0);
 
@@ -67,7 +83,8 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
   const sourceIcon = clean(item.sourceIconUrl) ? item.sourceIconUrl! : undefined;
   const isVideo = item.kind === 2;
 
-  // ✅ NO HOOKS HERE (fixes "Rendered fewer hooks than expected")
+  const showAi = canShowAiBadge(item, getCategory);
+
   const fadeKey = `${clean(item.id)}:${index}`;
 
   return (
@@ -186,70 +203,62 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500 }: 
         )}
       </Box>
 
-      {/* Right time */}
-{/* Right side: AI + Time */}
-<Box
-  sx={{
-    position: "absolute",
-    top: { xs: 10, md: 14 },
-    right: { xs: 10, md: 14 },
-    zIndex: 10,
-    display: "flex",
-    alignItems: "center",
-    gap: 1,
-  }}
->
-  {/* ✅ AI Badge (only if summary exists) */}
-  {!!clean(item.summary) && (
-    <Box
-      sx={{
-        px: 1.1,
-        py: 0.6,
-        borderRadius: 999,
-        bgcolor: "rgba(255,255,255,.95)",
-        border: "1px solid",
-        borderColor: "divider",
-        display: "flex",
-        alignItems: "center",
-        gap: 0.6,
-        boxShadow: "0 4px 14px rgba(0,0,0,.15)",
-      }}
-    >
-
-      <Typography
+      {/* Right side: AI + Time */}
+      <Box
         sx={{
-          fontSize: 11.5,
-          fontWeight: 950,
-          lineHeight: 1,
+          position: "absolute",
+          top: { xs: 10, md: 14 },
+          right: { xs: 10, md: 14 },
+          zIndex: 10,
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
         }}
       >
-        AI Summary
-      </Typography>
-    </Box>
-  )}
+        {/* ✅ AI badge ONLY when AI is allowed */}
+        {showAi ? (
+          <Box
+            sx={{
+              px: 1.1,
+              py: 0.6,
+              borderRadius: 999,
+              bgcolor: "rgba(255,255,255,.95)",
+              border: "1px solid",
+              borderColor: "divider",
+              display: "flex",
+              alignItems: "center",
+              gap: 0.6,
+              boxShadow: "0 4px 14px rgba(0,0,0,.15)",
+            }}
+          >
+            <Typography sx={{ fontSize: 11.5, fontWeight: 950, lineHeight: 1 }}>
+              AI Summary
+            </Typography>
+          </Box>
+        ) : null}
 
-  {/* Existing time badge */}
-  <Box
-    sx={{
-      px: 1.1,
-      py: 0.7,
-      borderRadius: 999,
-      bgcolor: "rgba(0,0,0,.35)",
-      backdropFilter: "blur(8px)",
-      border: "1px solid rgba(255,255,255,.18)",
-    }}
-  >
-    <TimeAgo
-      iso={item.publishedAt}
-      variant="caption"
-      sx={{
-        color: "rgba(255,255,255,.92)",
-        fontWeight: 900,
-        fontSize: { xs: 11, md: 12 },
-      }}
-    />
-  </Box>
-</Box>
+        {/* Existing time badge */}
+        <Box
+          sx={{
+            px: 1.1,
+            py: 0.7,
+            borderRadius: 999,
+            bgcolor: "rgba(0,0,0,.35)",
+            backdropFilter: "blur(8px)",
+            border: "1px solid rgba(255,255,255,.18)",
+          }}
+        >
+          <TimeAgo
+            iso={item.publishedAt}
+            variant="caption"
+            sx={{
+              color: "rgba(255,255,255,.92)",
+              fontWeight: 900,
+              fontSize: { xs: 11, md: 12 },
+            }}
+          />
+        </Box>
+      </Box>
 
       {safeItems.length > 1 && (
         <>

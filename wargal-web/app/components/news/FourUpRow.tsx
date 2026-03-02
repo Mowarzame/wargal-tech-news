@@ -8,6 +8,9 @@ import AiBadge from "../ai/AiBadge";
 type Props = {
   items: NewsItem[];
   onOpen: (item: NewsItem) => void;
+
+  // ✅ NEW: enforce ForeignNews for videos
+  getCategory?: (sourceId?: string | null) => string;
 };
 
 function clean(s?: string | null) {
@@ -24,7 +27,24 @@ function pickImage(it: NewsItem) {
   return "/placeholder-news.jpg";
 }
 
-export default function FourUpRow({ items, onOpen }: Props) {
+function canShowAiBadge(it: NewsItem, getCategory?: (sourceId?: string | null) => string) {
+  const kind = it?.kind;
+
+  if (kind === 1) return !!clean((it as any)?.summary);
+
+  if (kind === 2) {
+    const sid = clean((it as any)?.sourceId);
+    const cat =
+      (getCategory ? clean(getCategory(sid)) : "") ||
+      clean((it as any)?.sourceCategory);
+
+    return cat === "ForeignNews";
+  }
+
+  return false;
+}
+
+export default function FourUpRow({ items, onOpen, getCategory }: Props) {
   const slice = items.slice(0, 4);
   if (!slice.length) return null;
 
@@ -38,6 +58,7 @@ export default function FourUpRow({ items, onOpen }: Props) {
     >
       {slice.map((item) => {
         const image = pickImage(item);
+        const showAi = canShowAiBadge(item, getCategory);
 
         return (
           <Box
@@ -52,7 +73,7 @@ export default function FourUpRow({ items, onOpen }: Props) {
               bgcolor: "common.white",
               border: "1px solid",
               borderColor: "divider",
-                  position: "relative", // ✅ REQUIRED
+              position: "relative",
             }}
           >
             <Box
@@ -61,8 +82,9 @@ export default function FourUpRow({ items, onOpen }: Props) {
               alt={item.title}
               sx={{ width: "100%", height: 140, objectFit: "cover", display: "block" }}
             />
-            {/* ✅ AI badge */}
-{!!clean(item.summary) && <AiBadge />}
+
+            {/* ✅ AI badge ONLY when AI is allowed */}
+            {showAi ? <AiBadge /> : null}
 
             <Box sx={{ p: 1.5 }}>
               <Typography
