@@ -410,7 +410,7 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [openItem, setOpenItem] = useState<NewsItem | null>(null);
 
-const [nowTick, setNowTick] = useState<number>(0);
+const [nowTick, setNowTick] = useState(0);
 
   const lastRefreshAtRef = useRef<number>(0);
   const refreshingRef = useRef<boolean>(false);
@@ -421,8 +421,10 @@ const [nowTick, setNowTick] = useState<number>(0);
     if (isMobile) setMobileRelatedOpen(false);
   }, [openItem?.id, (openItem as any)?.url, isMobile]);
 
+
+
 useEffect(() => {
-  setNowTick(Date.now()); // ✅ first client-only tick
+  setNowTick(Date.now());
   const id = setInterval(() => setNowTick(Date.now()), 60 * 1000);
   return () => clearInterval(id);
 }, []);
@@ -1121,12 +1123,11 @@ const aiCategory = openItem ? clean(getCategoryForSource(clean((openItem as any)
             <Box sx={{ flex: 1 }} />
 
             {!!clean((openItem as any)?.publishedAt) && (
-              <TimeAgo
-                key={`${clean((openItem as any)?.id) || clean((openItem as any)?.url)}-${nowTick}`}
-                iso={(openItem as any)?.publishedAt}
-                variant="caption"
-                sx={{ color: "text.secondary", fontWeight: 900 }}
-              />
+<TimeAgo
+  iso={(openItem as any)?.publishedAt}
+  variant="caption"
+  sx={{ color: "text.secondary", fontWeight: 900 }}
+/>
             )}
 
 {/* ✅ Only show AI button if this item supports AI */}
