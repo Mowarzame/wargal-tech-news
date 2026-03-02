@@ -776,6 +776,8 @@ const canUseAiForItem = (it?: NewsItem | null) => {
   return false;
 };
 
+const aiCategory = openItem ? clean(getCategoryForSource(clean((openItem as any)?.sourceId))) : "";
+
 
   return (
     <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }} data-nowtick={nowTick}>
@@ -1103,20 +1105,21 @@ const canUseAiForItem = (it?: NewsItem | null) => {
               />
             )}
 
-<Button
-  size="small"
-  variant="outlined"
-  startIcon={<AutoAwesomeIcon />}
-  disabled={!openItem || !canUseAiForItem(openItem)}
-  onClick={() => {
-    if (!openItem) return;
-    if (!canUseAiForItem(openItem)) return;
-    setAiOpen(true);
-  }}
-  sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
->
-  Soo koob (AI)
-</Button>
+{/* ✅ Only show AI button if this item supports AI */}
+{canUseAiForItem(openItem) ? (
+  <Button
+    size="small"
+    variant="outlined"
+    startIcon={<AutoAwesomeIcon />}
+    onClick={() => {
+      if (!openItem) return;
+      setAiOpen(true);
+    }}
+    sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+  >
+    Soo koob (AI)
+  </Button>
+) : null}
           </Stack>
         </DialogTitle>
 
@@ -1643,16 +1646,17 @@ const canUseAiForItem = (it?: NewsItem | null) => {
     {/* ✅ Scroll container */}
     <Box sx={{ height: "100%", overflow: "auto", pr: 0.5 }}>
       {openItem ? (
-        <AiSomaliSummary
-          kind={aiKind}
-          title={clean((openItem as any)?.title)}
-          url={clean((openItem as any)?.url)}
-          sourceName={clean((openItem as any)?.sourceName)}
-          summary={clean((openItem as any)?.summary)}
-          autoRun={true}
-          runKey={aiRunKey}
-          onLoadingChange={(v: boolean) => setAiLoading(v)}
-        />
+<AiSomaliSummary
+  kind={aiKind}
+  title={clean((openItem as any)?.title)}
+  url={clean((openItem as any)?.url)}
+  sourceName={clean((openItem as any)?.sourceName)}
+  summary={clean((openItem as any)?.summary)}
+  category={aiCategory} // ✅ IMPORTANT
+  autoRun={true}
+  runKey={aiRunKey}
+  onLoadingChange={(v: boolean) => setAiLoading(v)}
+/>
       ) : (
         <Typography variant="body2" color="text.secondary">
           No item selected.

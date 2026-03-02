@@ -4,6 +4,9 @@ type SomaliSummaryInput = {
   url: string;
   summary?: string | null;
   sourceName?: string | null;
+
+  // ✅ NEW: pass category so we can enforce transcript-only for ForeignNews videos
+  category?: string | null;
 };
 
 function clean(s?: string | null) {
@@ -50,26 +53,41 @@ async function getYoutubeTranscript(url: string) {
   if (!id) return "";
 
   const r = await fetch(`/api/youtube/transcript?videoId=${encodeURIComponent(id)}`);
+  if (!r.ok) return "";
+
   const j = await r.json().catch(() => ({ transcript: "" }));
   return clean(j?.transcript);
 }
 
 export async function summarizeSomali(input: SomaliSummaryInput) {
   const url = safeUrl(input.url);
+  const category = clean(input.category);
 
   let longText = clean(input.summary);
 
-  // ✅ For videos: try transcript first
-  if (input.kind === 2 && url) {
+  // ✅ STRICT: ForeignNews videos MUST use transcript
+  const isForeignNewsVideo = input.kind === 2 && category === "ForeignNews";
+
+  if (isForeignNewsVideo && url) {
+    const transcript = await getYoutubeTranscript(url);
+
+    // ✅ required
+    if (!transcript) {
+      throw new Error("No YouTube captions/transcript available for this ForeignNews video.");
+    }
+
+    longText = transcript;
+  } else if (input.kind === 2 && url) {
+    // ✅ Non-ForeignNews videos: keep your previous behavior (optional transcript)
     const transcript = await getYoutubeTranscript(url);
     if (transcript) longText = transcript;
   }
 
-  // fallback: keep description/summary if transcript is missing
   const payload = {
     ...input,
     url,
     summary: longText,
+    category: category || null,
   };
 
   const res = await fetch("/api/ai/somali-summary", {
@@ -78,7 +96,7 @@ export async function summarizeSomali(input: SomaliSummaryInput) {
     body: JSON.stringify(payload),
   });
 
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error ?? "AI failed");
 
   return data;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Box, Button, Typography } from "@mui/material";
+import { Box, Button, CircularProgress, Typography } from "@mui/material";
 import { summarizeSomali } from "@/app/lib/ai";
 
 type Props = {
@@ -11,9 +11,13 @@ type Props = {
   summary?: string | null;
   sourceName?: string | null;
 
-  // ✅ auto-run
+  // ✅ NEW
+  category?: string | null;
+
   autoRun?: boolean;
   runKey?: string;
+
+  // optional: allow parent modal to show overlay
   onLoadingChange?: (loading: boolean) => void;
 };
 
@@ -23,17 +27,15 @@ export default function AiSomaliSummary({
   url,
   summary,
   sourceName,
+  category,
   autoRun = false,
   runKey,
-  onLoadingChange
+  onLoadingChange,
 }: Props) {
   const [loading, setLoading] = useState(false);
-
-  // ✅ Keep text visible while loading (do NOT clear it)
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
 
-  // ✅ Prevent repeat auto-runs for same item
   const ranRef = useRef<string>("");
 
   const run = async () => {
@@ -42,10 +44,11 @@ export default function AiSomaliSummary({
     setLoading(true);
     onLoadingChange?.(true);
     setErr("");
+    setText("");
 
     try {
-      const r = await summarizeSomali({ kind, title, url, summary, sourceName });
-      setText((r?.summary ?? "").trim());
+      const r = await summarizeSomali({ kind, title, url, summary, sourceName, category });
+      setText(r.summary);
     } catch (e: any) {
       setErr(e?.message ?? "Error");
     } finally {
@@ -54,20 +57,19 @@ export default function AiSomaliSummary({
     }
   };
 
-  // ✅ auto-generate ONLY once per runKey (or per stable fallback key)
   useEffect(() => {
     if (!autoRun) return;
 
-    const k = String(runKey || `${kind}:${title}:${url}`);
+    const k = String(runKey || `${kind}:${title}:${url}:${category || ""}`);
     if (ranRef.current === k) return;
 
     ranRef.current = k;
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRun, runKey, kind, title, url]);
+  }, [autoRun, runKey, kind, title, url, category]);
 
   return (
-    <Box sx={{ mt: 0 }}>
+    <Box sx={{ mt: 1 }}>
       {/* Manual trigger (still available) */}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
         <Button
@@ -75,11 +77,11 @@ export default function AiSomaliSummary({
           size="small"
           onClick={run}
           disabled={loading}
-          sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
+          sx={{ textTransform: "none", fontWeight: 900 }}
         >
-          {/* ✅ No spinner + no "AI..." label */}
-          Soo koob (AI)
+          {loading ? "AI..." : "Soo koob (AI)"}
         </Button>
+        {loading && <CircularProgress size={18} />}
       </Box>
 
       {err && (

@@ -7,8 +7,11 @@ type Body = {
   kind: 1 | 2;
   title: string;
   url: string;
-  summary?: string | null;
+  summary?: string | null;      // RSS description OR YouTube transcript (for ForeignNews videos)
   sourceName?: string | null;
+
+  // ✅ NEW: used to enforce transcript-only for ForeignNews videos
+  category?: string | null;
 };
 
 function clean(s?: string | null) {
@@ -19,31 +22,36 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
 
-    const kind = body.kind === 2 ? 2 : 1;
+    const kind: 1 | 2 = body.kind === 2 ? 2 : 1;
     const title = clean(body.title);
     const url = clean(body.url);
     const summary = clean(body.summary);
     const sourceName = clean(body.sourceName);
+    const category = clean(body.category);
 
     if (!title || !url) {
+      return NextResponse.json({ error: "Missing title or url" }, { status: 400 });
+    }
+
+    // ✅ STRICT RULE:
+    // ForeignNews videos MUST use YouTube captions/transcript (sent in `summary`)
+    if (kind === 2 && category === "ForeignNews" && !summary) {
       return NextResponse.json(
-        { error: "Missing title or url" },
+        { error: "ForeignNews videos require YouTube captions/transcript." },
         { status: 400 }
       );
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { error: "OPENAI_API_KEY is not configured" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "OPENAI_API_KEY is not configured" }, { status: 500 });
     }
 
     const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-
     const client = new OpenAI({ apiKey });
-const input = `
+
+    // ✅ Keep your prompt as-is (only tiny enhancement: include category + rename Description -> Content)
+    const input = `
 You are a highly intelligent Somali investigative journalist and analyst.
 
 Your task:
@@ -73,16 +81,16 @@ You may use logical reasoning and contextual knowledge to enrich the explanation
 News Data:
 Title: ${title}
 Source: ${sourceName}
+Category: ${category}
 URL: ${url}
-Description: ${summary}
+Content: ${summary}
 
 Now produce the summary.
-`;
+`.trim();
 
     const resp = await client.responses.create({
       model,
       input,
-      // keep it stable + cheap
       temperature: 0.3,
     });
 
