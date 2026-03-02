@@ -232,7 +232,7 @@ export default function BreakingSlideshow({ items, onOpen, intervalMs = 6500, ge
             }}
           >
             <Typography sx={{ fontSize: 11.5, fontWeight: 950, lineHeight: 1 }}>
-              AI Summary
+              AI Somali Summary
             </Typography>
           </Box>
         ) : null}
