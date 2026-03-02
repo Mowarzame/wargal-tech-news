@@ -11,12 +11,12 @@ import HomeShellSkeleton from "@/app/components/news/HomeShellSkeleton";
 import { getFeedItems, getFeedSources } from "@/app/lib/api";
 import type { Metadata } from "next";
 
-// ✅ Edge runtime for fastest response globally
-export const runtime = "edge";
+
 
 // ✅ Cache and revalidate every 60 seconds
 export const revalidate = 60;
-
+// ✅ optional: let Next decide
+// export const dynamic = "auto";
 // ✅ Enable static optimization
 export const dynamic = "force-static";
 
