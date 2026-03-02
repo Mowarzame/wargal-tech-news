@@ -104,7 +104,7 @@ namespace TechNewsWorker.Services
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
 
-            // ✅ Use the configured client name in Program.cs
+            // ✅ Must match Program.cs registration
             var http = _httpClientFactory.CreateClient("ingestion");
 
             // apply RSS options
@@ -118,7 +118,9 @@ namespace TechNewsWorker.Services
                 await db.SaveChangesAsync(ct);
 
                 var gapSec = (src.NextFetchAt!.Value - src.LastFetchedAt!.Value).TotalSeconds;
-                _logger.LogInformation("RSS[{Run}]: done source={Name} added={Added} gapSec={Gap} next={Next:o} err={Err} lastErr={LastErr}",
+
+                _logger.LogInformation(
+                    "RSS[{Run}]: done source={Name} added={Added} gapSec={Gap} next={Next:o} err={Err} lastErr={LastErr}",
                     runId, src.Name, added, gapSec, src.NextFetchAt, src.ErrorCount, src.LastError);
             }
             catch (Exception ex)
@@ -162,7 +164,7 @@ namespace TechNewsWorker.Services
                     return 0;
                 }
 
-                // Guard: non-XML bodies (some sites return HTML/JSON on /api/)
+                // Guard: non-XML bodies (some sites return HTML/JSON)
                 var mediaType = resp.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
                 if (mediaType != null && !mediaType.Contains("xml") && !mediaType.Contains("rss") && !mediaType.Contains("atom"))
                 {
@@ -179,7 +181,7 @@ namespace TechNewsWorker.Services
 
                 // ✅ Read bytes once so we can parse:
                 // 1) SyndicationFeed for core fields
-                // 2) XDocument for image extraction (media:content/enclosure/content:encoded/img)
+                // 2) XDocument for image extraction
                 var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
                 if (bytes.Length == 0)
                 {
@@ -191,10 +193,7 @@ namespace TechNewsWorker.Services
                 XDocument? doc;
 
                 using (var ms = new MemoryStream(bytes))
-                using (var xmlReader = XmlReader.Create(ms, new XmlReaderSettings
-                {
-                    DtdProcessing = DtdProcessing.Ignore
-                }))
+                using (var xmlReader = XmlReader.Create(ms, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore }))
                 {
                     feed = SyndicationFeed.Load(xmlReader);
                 }
@@ -221,7 +220,7 @@ namespace TechNewsWorker.Services
                     return 0;
                 }
 
-                // ✅ Build externalId -> imageUrl map from raw XML
+                // ✅ Build externalId -> imageUrl map from raw RSS XML
                 var imageMap = BuildRssImageMap(doc);
 
                 var candidates = new List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author, string? ImageUrl)>();
@@ -258,6 +257,9 @@ namespace TechNewsWorker.Services
                     ));
                 }
 
+                // ✅ Fallback: If RSS doesn't contain images, fetch page HTML and pull og:image (limit small)
+                await HydrateMissingImagesFromHtmlAsync(http, candidates, ct);
+
                 var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
 
                 var existing = await db.FeedItems.AsNoTracking()
@@ -283,7 +285,7 @@ namespace TechNewsWorker.Services
                         Summary = Truncate(CleanText(c.Summary), 2000),
                         LinkUrl = Truncate(c.Link, 1200),
 
-                        // ✅ THIS is the main fix:
+                        // ✅ Main goal: persist feed item image when available
                         ImageUrl = c.ImageUrl,
 
                         PublishedAt = c.Published,
@@ -308,9 +310,9 @@ namespace TechNewsWorker.Services
             }
         }
 
-        // =========================
-        // ✅ Image extraction helpers
-        // =========================
+        // ==========================================
+        // ✅ Image extraction from RSS XML (fast path)
+        // ==========================================
 
         private static Dictionary<string, string?> BuildRssImageMap(XDocument? doc)
         {
@@ -413,9 +415,126 @@ namespace TechNewsWorker.Services
                    && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps);
         }
 
-        // =========================
+        // ==========================================
+        // ✅ HTML metadata fallback (og:image)
+        // ==========================================
+
+        private static async Task HydrateMissingImagesFromHtmlAsync(
+            HttpClient http,
+            List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author, string? ImageUrl)> candidates,
+            CancellationToken ct)
+        {
+            // Keep it cheap + safe
+            const int maxHtmlFetches = 3;
+
+            var missing = candidates
+                .Where(c => string.IsNullOrWhiteSpace(c.ImageUrl) && !string.IsNullOrWhiteSpace(c.Link))
+                .Take(maxHtmlFetches)
+                .ToList();
+
+            if (missing.Count == 0) return;
+
+            for (int i = 0; i < missing.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var c = missing[i];
+                var img = await TryExtractOgImageAsync(http, c.Link!, ct);
+                if (string.IsNullOrWhiteSpace(img)) continue;
+
+                var idx = candidates.FindIndex(x => x.ExternalId == c.ExternalId);
+                if (idx >= 0)
+                {
+                    var old = candidates[idx];
+                    candidates[idx] = (old.ExternalId, old.Title, old.Link, old.Published, old.Summary, old.Author, Truncate(img, 1200));
+                }
+            }
+        }
+
+        private static async Task<string?> TryExtractOgImageAsync(HttpClient http, string url, CancellationToken ct)
+        {
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml");
+
+                using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+                if (!resp.IsSuccessStatusCode) return null;
+
+                var mt = resp.Content.Headers.ContentType?.MediaType ?? "";
+                if (!mt.Contains("html", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                var html = await ReadLimitedUtf8Async(stream, maxBytes: 250_000, ct);
+                if (string.IsNullOrWhiteSpace(html)) return null;
+
+                // og:image
+                var og = Regex.Match(
+                    html,
+                    "<meta[^>]+property=[\"']og:image[\"'][^>]+content=[\"'](?<u>[^\"']+)[\"']",
+                    RegexOptions.IgnoreCase);
+                if (og.Success)
+                    return NormalizeUrl(url, og.Groups["u"].Value);
+
+                // twitter:image
+                var tw = Regex.Match(
+                    html,
+                    "<meta[^>]+name=[\"']twitter:image[\"'][^>]+content=[\"'](?<u>[^\"']+)[\"']",
+                    RegexOptions.IgnoreCase);
+                if (tw.Success)
+                    return NormalizeUrl(url, tw.Groups["u"].Value);
+
+                // first image tag (src or data-src)
+                var img = Regex.Match(
+                    html,
+                    "<img[^>]+(?:src|data-src)=[\"'](?<u>[^\"']+)[\"']",
+                    RegexOptions.IgnoreCase);
+                if (img.Success)
+                    return NormalizeUrl(url, img.Groups["u"].Value);
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<string?> ReadLimitedUtf8Async(Stream stream, int maxBytes, CancellationToken ct)
+        {
+            var buffer = new byte[Math.Min(maxBytes, 64 * 1024)];
+            using var ms = new MemoryStream();
+
+            while (ms.Length < maxBytes)
+            {
+                var toRead = (int)Math.Min(buffer.Length, maxBytes - ms.Length);
+                var n = await stream.ReadAsync(buffer.AsMemory(0, toRead), ct);
+                if (n <= 0) break;
+                ms.Write(buffer, 0, n);
+            }
+
+            if (ms.Length == 0) return null;
+            return Encoding.UTF8.GetString(ms.ToArray());
+        }
+
+        private static string? NormalizeUrl(string pageUrl, string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            raw = raw.Trim();
+
+            if (Uri.TryCreate(raw, UriKind.Absolute, out var abs))
+                return abs.ToString();
+
+            if (Uri.TryCreate(new Uri(pageUrl), raw, out var rel))
+                return rel.ToString();
+
+            return null;
+        }
+
+        // ==========================================
         // Existing helpers
-        // =========================
+        // ==========================================
 
         private void TouchOk(NewsSource src)
         {
