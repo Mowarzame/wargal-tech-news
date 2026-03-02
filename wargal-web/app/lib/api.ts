@@ -9,6 +9,7 @@ function unwrapList(json: any): any[] {
   const data = json?.data;
   return Array.isArray(data) ? data : [];
 }
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -21,10 +22,25 @@ function getToken(): string | null {
 function clean(s?: string | null) {
   return (s ?? "").trim();
 }
+
 // ✅ Same idea as Flutter _authHeaderOnly()
 function authHeaderOnly(): Record<string, string> {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function parseDate(input: any): Date | null {
+  const s = clean(String(input ?? ""));
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function isWithinDays(publishedAt: any, days: number): boolean {
+  const d = parseDate(publishedAt);
+  if (!d) return false;
+  const ms = days * 24 * 60 * 60 * 1000;
+  return Date.now() - d.getTime() <= ms;
 }
 
 export type PostReactionUserDto = {
@@ -40,7 +56,10 @@ export type PostReactionUserDto = {
 ========================= */
 export async function fetchFeedSources(): Promise<NewsSource[]> {
   const url = `${API_BASE}/feed-items/sources?_ts=${Date.now()}`;
-  const res = await fetch(url, { cache: "no-store", headers: { Accept: "application/json" } });
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
   if (!res.ok) throw new Error(`Sources failed (${res.status})`);
   const json = await res.json();
   const list = unwrapList(json);
@@ -60,34 +79,96 @@ export async function fetchFeedSources(): Promise<NewsSource[]> {
 }
 
 export async function fetchFeedItems(params?: {
-  page?: number;
-  pageSize?: number;
+  page?: number;          // starting page (default 1)
+  pageSize?: number;      // requested target count for frontend (we still page at 50)
   kind?: string;
   sourceId?: string;
   q?: string;
+  diverse?: boolean;
+
+  // ✅ NEW: frontend-only window
+  sinceDays?: number;     // default 3
+  maxPages?: number;      // safety cap (default 12)
 }): Promise<NewsItem[]> {
-  const qs = new URLSearchParams();
-  qs.set("page", String(params?.page ?? 1));
-  qs.set("pageSize", String(params?.pageSize ?? 20));
-  if (params?.kind) qs.set("kind", params.kind);
-  if (params?.sourceId) qs.set("sourceId", String(params.sourceId));
-  if (params?.q) qs.set("q", params.q);
-  qs.set("_ts", String(Date.now())); // cache-buster
+  const startPage = Math.max(1, Number(params?.page ?? 1));
+  const targetCount = Math.max(1, Number(params?.pageSize ?? 60));
 
-  const res = await fetch(`${API_BASE}/feed-items?${qs.toString()}`, {
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) throw new Error(`Feed failed (${res.status})`);
+  // ✅ Backend enforces pageSize <= 50, so we page at 50 always
+  const backendPageSize = 50;
 
-  const json = await res.json();
-  const list = unwrapList(json);
+  const sinceDays = Math.max(1, Number(params?.sinceDays ?? 3));
+  const maxPages = Math.max(1, Math.min(40, Number(params?.maxPages ?? 12)));
 
-  return list.filter(Boolean).map(normalizeFeedItem).filter(Boolean);
+  const out: NewsItem[] = [];
+  const seen = new Set<string>();
+
+  const add = (it: NewsItem) => {
+    const k = clean((it as any)?.id) || clean((it as any)?.url);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(it);
+  };
+
+  let page = startPage;
+
+  for (let i = 0; i < maxPages; i++) {
+    const qs = new URLSearchParams();
+    qs.set("page", String(page));
+    qs.set("pageSize", String(backendPageSize));
+
+    if (params?.kind) qs.set("kind", String(params.kind));
+    if (params?.sourceId) qs.set("sourceId", String(params.sourceId));
+    if (params?.q) qs.set("q", String(params.q));
+    if (params?.diverse) qs.set("diverse", "true");
+
+    // cache-buster (safe)
+    qs.set("_ts", String(Date.now()));
+
+    const url = `${API_BASE}/feed-items?${qs.toString()}`;
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`Feed failed (${res.status}): ${txt}`);
+    }
+
+    const json = await res.json().catch(() => null);
+    const rawList = unwrapList(json);
+
+    if (!rawList.length) break;
+
+    const normalized = rawList.filter(Boolean).map(normalizeFeedItem).filter(Boolean);
+
+    // ✅ Keep only within sinceDays (frontend window)
+    const windowed = normalized.filter((x) => isWithinDays((x as any)?.publishedAt, sinceDays));
+
+    // Add windowed items
+    for (const it of windowed) add(it);
+
+    // ✅ Stop conditions:
+    // 1) we already got enough items for UI
+    if (out.length >= targetCount) break;
+
+    // 2) if the OLDEST item in this page is older than sinceDays, next pages will be older → stop
+    const last = normalized[normalized.length - 1];
+    if (last && !isWithinDays((last as any)?.publishedAt, sinceDays)) break;
+
+    // 3) else keep paging
+    page++;
+  }
+
+  // Ensure newest first (backend is already desc, but after filtering/dedupe we re-sort)
+  out.sort((a: any, b: any) => clean(b?.publishedAt).localeCompare(clean(a?.publishedAt)));
+
+  return out;
 }
 
 export async function getFeedItems(): Promise<NewsItem[]> {
-  return fetchFeedItems({ page: 1, pageSize: 60 });
+  // ✅ Default: last 3 days, enough items for homepage
+  return fetchFeedItems({ page: 1, pageSize: 200, sinceDays: 3, maxPages: 12 });
 }
 
 export async function getFeedSources(): Promise<NewsSource[]> {
@@ -139,7 +220,6 @@ export async function fetchMe(): Promise<AuthUser | null> {
   });
   if (!res.ok) return null;
   const json = await res.json();
-  // users/me returns ServiceResponse<UserDto>
   const user = unwrapOne<AuthUser>(json);
   return user ?? null;
 }
@@ -199,6 +279,7 @@ export async function createPost(dto: {
   const json = await res.json();
   return (json?.data ?? json) as PostDto;
 }
+
 export async function fetchPostReactionsUsers(postId: string): Promise<PostReactionUserDto[]> {
   const res = await fetch(`${API_BASE}/posts/${postId}/reactions/users?_ts=${Date.now()}`, {
     cache: "no-store",
@@ -220,9 +301,6 @@ export async function fetchPostReactionsUsers(postId: string): Promise<PostReact
   return (Array.isArray(list) ? list : []).filter(Boolean) as PostReactionUserDto[];
 }
 
-// ✅ ADD inside wargal-web/app/lib/api.ts (near createPost)
-
-// ✅ Same behavior as Flutter createPostWithImage
 export async function createPostWithImage(args: {
   title: string;
   content: string;
@@ -232,25 +310,19 @@ export async function createPostWithImage(args: {
   const uri = `${API_BASE}/posts/with-image`;
 
   const form = new FormData();
-
-  // ✅ must match backend DTO property names exactly
   form.append("Title", args.title);
   form.append("Content", args.content);
 
   const v = clean(args.videoUrl ?? "");
   if (v) form.append("VideoUrl", v);
 
-  // ✅ File field name must match backend: "Image"
   if (args.imageFile) {
-    // browser automatically provides filename, but we pass it explicitly for consistency
     form.append("Image", args.imageFile, args.imageFile.name);
   }
 
   const res = await fetch(uri, {
     method: "POST",
-    headers: {
-      ...authHeaderOnly(), // ✅ DO NOT set Content-Type manually
-    },
+    headers: { ...authHeaderOnly() }, // ✅ DO NOT set Content-Type manually
     body: form,
   });
 
@@ -258,18 +330,16 @@ export async function createPostWithImage(args: {
   let json: any = null;
   try {
     json = text ? JSON.parse(text) : null;
-  } catch {
-    // ignore parse errors
-  }
+  } catch {}
 
   if (!res.ok) {
     const msg = json?.message ?? `Failed to create post (${res.status}): ${text}`;
     throw new Error(msg);
   }
 
-  const data = json?.data ?? json;
-  return data as PostDto;
+  return (json?.data ?? json) as PostDto;
 }
+
 export async function reactToPost(
   postId: string,
   isLike: boolean | null

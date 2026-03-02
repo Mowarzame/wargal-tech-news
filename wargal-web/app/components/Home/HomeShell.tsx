@@ -70,7 +70,21 @@ function isHttpUrl(u?: string | null) {
   const url = clean(u);
   return url.startsWith("http://") || url.startsWith("https://");
 }
+const MAX_DAYS = 3;
+const MAX_AGE_MS = MAX_DAYS * 24 * 60 * 60 * 1000;
 
+function parseIsoMs(iso?: string | null) {
+  const s = clean(iso);
+  if (!s) return null;
+  const t = new Date(s).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function isWithinLastDays(iso?: string | null, days = MAX_DAYS) {
+  const ms = parseIsoMs(iso);
+  if (!ms) return false;
+  return Date.now() - ms <= days * 24 * 60 * 60 * 1000;
+}
 function safeUrl(u?: string | null) {
   const url = clean(u);
   return isHttpUrl(url) ? url : "";
@@ -498,23 +512,30 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
       refreshingRef.current = true;
       lastRefreshAtRef.current = now;
 
-      try {
-        const [src, feed] = await Promise.all([
-          fetchFeedSources().catch(() => null),
-          fetchFeedItems({ page: 1, pageSize: 160 }).catch(() => []),
-        ]);
+try {
+  const pageSize = 50;      // ✅ backend max
+  const pagesToFetch = 4;   // ✅ 4 * 50 = 200 items (tune as you like)
 
-        if (!alive) return;
+  const [src, ...feedPages] = await Promise.all([
+    fetchFeedSources().catch(() => null),
+    ...Array.from({ length: pagesToFetch }, (_, i) =>
+      fetchFeedItems({ page: i + 1, pageSize }).catch(() => [])
+    ),
+  ]);
 
-        if (src) {
-          setAllSources((src ?? []).filter(Boolean).filter((s) => (s as any).isActive !== false));
-        }
+  const feed = feedPages.flat();
 
-        setAllItems((prev) => mergeTop(prev ?? [], (feed ?? []).filter(Boolean)));
-        setNowTick(Date.now());
-      } finally {
-        refreshingRef.current = false;
-      }
+  if (!alive) return;
+
+  if (src) {
+    setAllSources((src ?? []).filter(Boolean).filter((s) => (s as any).isActive !== false));
+  }
+
+  setAllItems((prev) => mergeTop(prev ?? [], (feed ?? []).filter(Boolean)));
+  setNowTick(Date.now());
+} finally {
+  refreshingRef.current = false;
+}
     }
 
     refresh(true);
@@ -538,25 +559,27 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
     };
   }, []);
 
-  const itemsAfterSourceFilters = useMemo(() => {
-    const list = (allItems ?? []).filter(Boolean);
+const itemsAfterSourceFilters = useMemo(() => {
+  const list = (allItems ?? [])
+    .filter(Boolean)
+    .filter((it) => isWithinLastDays((it as any)?.publishedAt, MAX_DAYS)); // ✅ only 3 days
 
-    const inAllowedSourceCategory = (it: NewsItem) => {
-      if (!allowedSourceIdSet) return true;
-      const sid = clean((it as any)?.sourceId);
-      if (!sid) return false;
-      return allowedSourceIdSet.has(String(sid));
-    };
+  const inAllowedSourceCategory = (it: NewsItem) => {
+    if (!allowedSourceIdSet) return true;
+    const sid = clean((it as any)?.sourceId);
+    if (!sid) return false;
+    return allowedSourceIdSet.has(String(sid));
+  };
 
-    if (isAllSources) return list.filter(inAllowedSourceCategory);
+  if (isAllSources) return list.filter(inAllowedSourceCategory);
 
-    return list.filter((it) => {
-      const sid = clean((it as any)?.sourceId);
-      if (!sid) return false;
-      if (!selectedSet.has(String(sid))) return false;
-      return inAllowedSourceCategory(it);
-    });
-  }, [allItems, allowedSourceIdSet, isAllSources, selectedSet]);
+  return list.filter((it) => {
+    const sid = clean((it as any)?.sourceId);
+    if (!sid) return false;
+    if (!selectedSet.has(String(sid))) return false;
+    return inAllowedSourceCategory(it);
+  });
+}, [allItems, allowedSourceIdSet, isAllSources, selectedSet]);
 
   const sortedAll = useMemo(() => {
     const list = [...itemsAfterSourceFilters];

@@ -1,6 +1,12 @@
 // ==============================
 // File: wargal-web/app/components/news/FilteredNewsGrid.tsx
-// ✅ FIX: stop AI auto-regenerating (remove nowTick from runKey usage)
+// ✅ FINAL (UI SAME + ZERO ERRORS)
+// - ✅ NO 3-day hard cap here (handled at fetch layer if needed)
+// - ✅ Load More shows ONLY when there are at least 50 items available
+// - ✅ AI badge rules preserved:
+//    - kind=1 (RSS) => must have summary
+//    - kind=2 (Video) => only if category is ForeignNews
+// - ✅ Stable AI runKey (NO nowTick)
 // ==============================
 "use client";
 
@@ -155,6 +161,8 @@ function scoreMatch(baseTokens: string[], candTokens: string[]) {
   return shared / denom;
 }
 
+const LOAD_MORE_THRESHOLD = 50;
+
 export default function FilteredNewsGrid({
   selectedSourceIds,
   initialItems,
@@ -170,11 +178,8 @@ export default function FilteredNewsGrid({
   const externalControl = typeof onOpen === "function";
 
   const [openItem, setOpenItem] = useState<NewsItem | null>(null);
-
   const [aiOpen, setAiOpen] = useState(false);
   const closeAi = () => setAiOpen(false);
-
-  const [visibleCount, setVisibleCount] = useState<number>(pageSize);
 
   // ✅ Force “time ago” updates (every 60s)
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
@@ -190,26 +195,7 @@ export default function FilteredNewsGrid({
 
   const list = useMemo(() => (initialItems ?? []).filter(Boolean), [initialItems]);
 
-  const modalUrl = useMemo(() => safeUrl(openItem?.url), [openItem]);
-  const isVideo = openItem?.kind === 2;
-
-  const ytId = useMemo(() => {
-    const u = safeUrl(openItem?.url);
-    if (!u) return null;
-    return extractYoutubeId(u);
-  }, [openItem]);
-
-  const youtubeEmbedSrc = useMemo(() => {
-    if (!ytId) return null;
-    return `https://www.youtube.com/embed/${ytId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`;
-  }, [ytId]);
-
-  const iframeSrc = useMemo(() => {
-    if (!modalUrl) return "";
-    if (isVideo && youtubeEmbedSrc) return youtubeEmbedSrc;
-    return modalUrl;
-  }, [modalUrl, isVideo, youtubeEmbedSrc]);
-
+  // ✅ Apply source selection + category selection
   const displayItems = useMemo(() => {
     const ids = (selectedSourceIds ?? []).map(String).filter(Boolean);
     const bySource = !ids.length
@@ -232,12 +218,37 @@ export default function FilteredNewsGrid({
     });
   }, [list, selectedSourceIds, selectedCategory, getCategory]);
 
-  useEffect(() => {
-    setVisibleCount(pageSize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageSize, selectedCategory, selectedSourceIds.join("|"), displayItems.length]);
+  // ✅ Visible paging (UI same)
+  const [visibleCount, setVisibleCount] = useState<number>(LOAD_MORE_THRESHOLD);
 
-  const canLoadMore = displayItems.length > visibleCount;
+  useEffect(() => {
+    // reset to 50 whenever filter changes
+    setVisibleCount(LOAD_MORE_THRESHOLD);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategory, selectedSourceIds.join("|"), displayItems.length]);
+
+  const hasEnoughToPaginate = displayItems.length >= LOAD_MORE_THRESHOLD;
+  const canLoadMore = hasEnoughToPaginate && displayItems.length > visibleCount;
+
+  const modalUrl = useMemo(() => safeUrl(openItem?.url), [openItem]);
+  const isVideo = openItem?.kind === 2;
+
+  const ytId = useMemo(() => {
+    const u = safeUrl(openItem?.url);
+    if (!u) return null;
+    return extractYoutubeId(u);
+  }, [openItem]);
+
+  const youtubeEmbedSrc = useMemo(() => {
+    if (!ytId) return null;
+    return `https://www.youtube.com/embed/${ytId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`;
+  }, [ytId]);
+
+  const iframeSrc = useMemo(() => {
+    if (!modalUrl) return "";
+    if (isVideo && youtubeEmbedSrc) return youtubeEmbedSrc;
+    return modalUrl;
+  }, [modalUrl, isVideo, youtubeEmbedSrc]);
 
   const closeReader = () => setOpenItem(null);
 
@@ -259,27 +270,27 @@ export default function FilteredNewsGrid({
     setAiOpen(true);
   };
 
-
   const canUseAi = (it?: NewsItem | null) => {
-  if (!it) return false;
+    if (!it) return false;
 
-  const kind = it.kind;
+    const kind = it.kind;
 
-  // ✅ type1 RSS only: must have summary
-  if (kind === 1) return !!clean((it as any)?.summary);
+    // ✅ type1 RSS only: must have summary
+    if (kind === 1) return !!clean((it as any)?.summary);
 
-  // ✅ type2 videos only if category is ForeignNews
-  if (kind === 2) {
-    const sid = it?.sourceId ? String(it.sourceId) : "";
-    const cat =
-      (getCategory ? clean(getCategory(sid)) : "") ||
-      clean((it as any)?.sourceCategory);
+    // ✅ type2 videos only if category is ForeignNews
+    if (kind === 2) {
+      const sid = it?.sourceId ? String(it.sourceId) : "";
+      const cat =
+        (getCategory ? clean(getCategory(sid)) : "") ||
+        clean((it as any)?.sourceCategory);
 
-    return cat === "ForeignNews";
-  }
+      return cat === "ForeignNews";
+    }
 
-  return false;
-};
+    return false;
+  };
+
   // ✅ stable AI runKey (NO nowTick)
   const aiRunKey = useMemo(() => {
     const k = clean(openItem?.id) || clean(openItem?.url) || "x";
@@ -449,28 +460,28 @@ export default function FilteredNewsGrid({
                 position: "relative",
               }}
             >
-{canUseAi(it) && (
-  <Chip
-    icon={<AutoAwesomeIcon />}
-    label="AI"
-    size="small"
-    onClick={(e) => {
-      e.stopPropagation();
-      openAiFor(it);
-    }}
-    sx={{
-      position: "absolute",
-      top: 10,
-      right: 10,
-      fontWeight: 900,
-      borderRadius: 999,
-      bgcolor: "common.white",
-      border: "1px solid",
-      borderColor: "divider",
-      "&:hover": { bgcolor: "grey.50" },
-    }}
-  />
-)}
+              {canUseAi(it) && (
+                <Chip
+                  icon={<AutoAwesomeIcon />}
+                  label="AI"
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openAiFor(it);
+                  }}
+                  sx={{
+                    position: "absolute",
+                    top: 10,
+                    right: 10,
+                    fontWeight: 900,
+                    borderRadius: 999,
+                    bgcolor: "common.white",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    "&:hover": { bgcolor: "grey.50" },
+                  }}
+                />
+              )}
 
               <Box
                 sx={{
@@ -498,6 +509,7 @@ export default function FilteredNewsGrid({
 
                 {!!clean(it?.publishedAt) && (
                   <TimeAgo
+                    key={`${clean(it?.id) || clean(it?.url)}-${nowTick}`}
                     iso={it?.publishedAt}
                     variant="caption"
                     sx={{ color: "text.secondary", fontWeight: 900, mt: 0.75, display: "block" }}
@@ -509,12 +521,12 @@ export default function FilteredNewsGrid({
         })}
       </Box>
 
-      {/* Load More */}
+      {/* Load More (ONLY when >= 50 items exist) */}
       <Box sx={{ mt: 2, display: "flex", justifyContent: "center" }}>
         {canLoadMore ? (
           <Button
             variant="contained"
-            onClick={() => setVisibleCount((n) => n + pageSize)}
+            onClick={() => setVisibleCount((n) => Math.min(n + pageSize, displayItems.length))}
             sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999, px: 3 }}
           >
             Load more
@@ -522,7 +534,7 @@ export default function FilteredNewsGrid({
         ) : null}
       </Box>
 
-      {/* Reader Modal (ONLY when FilteredNewsGrid controls the modal itself) */}
+      {/* Reader Modal (ONLY when FilteredNewsGrid controls it) */}
       {!externalControl && (
         <Dialog
           open={!!openItem && !aiOpen}
@@ -547,7 +559,7 @@ export default function FilteredNewsGrid({
                 {clean(openItem?.title) || "Read"}
               </Typography>
 
-              {!!openItem && (
+              {!!openItem && canUseAi(openItem) ? (
                 <Button
                   size="small"
                   variant="outlined"
@@ -557,7 +569,7 @@ export default function FilteredNewsGrid({
                 >
                   Soo koob (AI)
                 </Button>
-              )}
+              ) : null}
 
               <IconButton onClick={closeReader} aria-label="Close reader">
                 <CloseIcon />
@@ -695,7 +707,7 @@ export default function FilteredNewsGrid({
 
       {/* NOTE:
          This component doesn’t render a separate AI modal currently (HomeShell does).
-         We still fixed runKey logic here so it won’t ever re-run due to nowTick.
+         Kept for reference only.
       */}
       {false && aiOpen && openItem ? (
         <AiSomaliSummary
