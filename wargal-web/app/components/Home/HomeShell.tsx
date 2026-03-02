@@ -1117,7 +1117,7 @@ const aiCategory = openItem ? clean(getCategoryForSource(clean((openItem as any)
     }}
     sx={{ textTransform: "none", fontWeight: 900, borderRadius: 999 }}
   >
-    Soo koob (AI)
+    Soo koob (AI Summary)
   </Button>
 ) : null}
           </Stack>
