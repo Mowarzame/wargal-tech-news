@@ -410,21 +410,22 @@ export default function HomeShell({ items, sources, categoryBySourceId }: Props)
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [openItem, setOpenItem] = useState<NewsItem | null>(null);
 
-  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+const [nowTick, setNowTick] = useState<number>(0);
 
   const lastRefreshAtRef = useRef<number>(0);
   const refreshingRef = useRef<boolean>(false);
 
   const [mobileRelatedOpen, setMobileRelatedOpen] = useState(false);
+
   useEffect(() => {
     if (isMobile) setMobileRelatedOpen(false);
   }, [openItem?.id, (openItem as any)?.url, isMobile]);
 
-  useEffect(() => {
-    const id = setInterval(() => setNowTick(Date.now()), 60 * 1000);
-    return () => clearInterval(id);
-  }, []);
-
+useEffect(() => {
+  setNowTick(Date.now()); // ✅ first client-only tick
+  const id = setInterval(() => setNowTick(Date.now()), 60 * 1000);
+  return () => clearInterval(id);
+}, []);
   const getCategoryForSource = (sourceId?: string | null) => {
     const sid = String(sourceId ?? "");
     const fromMap = clean(categoryBySourceId?.[sid]);
@@ -803,7 +804,7 @@ const aiCategory = openItem ? clean(getCategoryForSource(clean((openItem as any)
 
 
   return (
-    <Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }} data-nowtick={nowTick}>
+<Box sx={{ bgcolor: "#f5f7fb", minHeight: "100vh" }}>
       <Box sx={{ px: { xs: 1.5, md: 2 }, py: 2 }}>
         {/* Small screens: selection summary + Sources button */}
         <Box

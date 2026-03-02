@@ -28,6 +28,24 @@ function pickImage(it?: NewsItem | null) {
   return "/placeholder-news.jpg";
 }
 
+function keyForItem(it?: NewsItem | null) {
+  if (!it) return "";
+  const id = clean((it as any)?.id);
+  if (id) return `id:${id}`;
+
+  // your API uses LinkUrl, and your UI sometimes uses url; support both
+  const link = clean((it as any)?.linkUrl) || clean((it as any)?.url);
+  if (link) return `u:${link}`;
+
+  const ext = clean((it as any)?.externalId);
+  if (ext) return `x:${ext}`;
+
+  // last resort (still deterministic-ish)
+  const title = clean((it as any)?.title);
+  const pub = clean((it as any)?.publishedAt);
+  return `t:${title}|p:${pub}`;
+}
+
 // ✅ AI eligibility:
 // - kind=1 => must have summary
 // - kind=2 => only if category is ForeignNews
@@ -69,7 +87,7 @@ export default function NewsGridHighlights({ items, onOpen, getCategory }: Props
 
         return (
           <Box
-            key={clean(item?.id) || `${image}-${Math.random()}`}
+            key={keyForItem(item)}
             onClick={() => item && onOpen(item)}
             sx={{
               cursor: "pointer",
