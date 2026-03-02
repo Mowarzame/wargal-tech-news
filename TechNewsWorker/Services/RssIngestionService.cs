@@ -1,7 +1,9 @@
 using System.Net;
 using System.ServiceModel.Syndication;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Xml;
+using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TechNewsCore.Models;
@@ -101,7 +103,9 @@ namespace TechNewsWorker.Services
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
-            var http = _httpClientFactory.CreateClient("rss");
+
+            // ✅ Use the configured client name in Program.cs
+            var http = _httpClientFactory.CreateClient("ingestion");
 
             // apply RSS options
             http.Timeout = TimeSpan.FromSeconds(Math.Max(5, _rss.RequestTimeoutSeconds));
@@ -173,14 +177,33 @@ namespace TechNewsWorker.Services
                 if (resp.Content.Headers.LastModified.HasValue)
                     src.LastModified = resp.Content.Headers.LastModified.Value.ToString("R");
 
-                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                // ✅ Read bytes once so we can parse:
+                // 1) SyndicationFeed for core fields
+                // 2) XDocument for image extraction (media:content/enclosure/content:encoded/img)
+                var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
+                if (bytes.Length == 0)
+                {
+                    TouchOk(src);
+                    return 0;
+                }
 
-                using var xmlReader = XmlReader.Create(stream, new XmlReaderSettings
+                SyndicationFeed? feed;
+                XDocument? doc;
+
+                using (var ms = new MemoryStream(bytes))
+                using (var xmlReader = XmlReader.Create(ms, new XmlReaderSettings
                 {
                     DtdProcessing = DtdProcessing.Ignore
-                });
+                }))
+                {
+                    feed = SyndicationFeed.Load(xmlReader);
+                }
 
-                var feed = SyndicationFeed.Load(xmlReader);
+                using (var ms2 = new MemoryStream(bytes))
+                {
+                    doc = await XDocument.LoadAsync(ms2, LoadOptions.None, ct);
+                }
+
                 if (feed == null)
                 {
                     TouchOk(src);
@@ -198,7 +221,10 @@ namespace TechNewsWorker.Services
                     return 0;
                 }
 
-                var candidates = new List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author)>();
+                // ✅ Build externalId -> imageUrl map from raw XML
+                var imageMap = BuildRssImageMap(doc);
+
+                var candidates = new List<(string ExternalId, string Title, string? Link, DateTime Published, string? Summary, string? Author, string? ImageUrl)>();
 
                 foreach (var it in items)
                 {
@@ -219,7 +245,17 @@ namespace TechNewsWorker.Services
                         ? it.PublishDate.UtcDateTime
                         : (it.LastUpdatedTime.UtcDateTime != default ? it.LastUpdatedTime.UtcDateTime : DateTime.UtcNow);
 
-                    candidates.Add((Truncate(externalId, 300)!, title, link, pub, summary, author));
+                    imageMap.TryGetValue(externalId, out var img);
+
+                    candidates.Add((
+                        Truncate(externalId, 300)!,
+                        title,
+                        link,
+                        pub,
+                        summary,
+                        author,
+                        Truncate(img, 1200)
+                    ));
                 }
 
                 var extIds = candidates.Select(c => c.ExternalId).Distinct().ToList();
@@ -246,7 +282,10 @@ namespace TechNewsWorker.Services
                         Title = Truncate(c.Title, 500),
                         Summary = Truncate(CleanText(c.Summary), 2000),
                         LinkUrl = Truncate(c.Link, 1200),
-                        ImageUrl = null,
+
+                        // ✅ THIS is the main fix:
+                        ImageUrl = c.ImageUrl,
+
                         PublishedAt = c.Published,
                         ImportedAt = DateTime.UtcNow,
                         Author = Truncate(c.Author, 200),
@@ -268,6 +307,115 @@ namespace TechNewsWorker.Services
                 return 0;
             }
         }
+
+        // =========================
+        // ✅ Image extraction helpers
+        // =========================
+
+        private static Dictionary<string, string?> BuildRssImageMap(XDocument? doc)
+        {
+            var map = new Dictionary<string, string?>(StringComparer.Ordinal);
+            if (doc?.Root == null) return map;
+
+            // RSS: <rss><channel><item>
+            var rssItems = doc.Descendants("item").ToList();
+            if (rssItems.Count > 0)
+            {
+                foreach (var item in rssItems)
+                {
+                    var guid = item.Element("guid")?.Value?.Trim();
+                    var link = item.Element("link")?.Value?.Trim();
+
+                    var externalId = !string.IsNullOrWhiteSpace(guid) ? guid
+                        : (!string.IsNullOrWhiteSpace(link) ? link : null);
+
+                    if (string.IsNullOrWhiteSpace(externalId)) continue;
+
+                    map[externalId] = ExtractRssImageUrl(item);
+                }
+
+                return map;
+            }
+
+            // Atom fallback: <feed><entry>
+            XNamespace atom = "http://www.w3.org/2005/Atom";
+            foreach (var entry in doc.Descendants(atom + "entry"))
+            {
+                var id = entry.Element(atom + "id")?.Value?.Trim();
+
+                var link = entry.Elements(atom + "link")
+                    .FirstOrDefault(l => string.Equals((string?)l.Attribute("rel"), "alternate", StringComparison.OrdinalIgnoreCase))
+                    ?.Attribute("href")?.Value?.Trim();
+
+                var externalId = !string.IsNullOrWhiteSpace(id) ? id
+                    : (!string.IsNullOrWhiteSpace(link) ? link : null);
+
+                if (string.IsNullOrWhiteSpace(externalId)) continue;
+
+                map[externalId] = ExtractAtomImageUrl(entry);
+            }
+
+            return map;
+        }
+
+        private static string? ExtractRssImageUrl(XElement item)
+        {
+            XNamespace media = "http://search.yahoo.com/mrss/";
+            XNamespace content = "http://purl.org/rss/1.0/modules/content/";
+
+            // media:content url
+            var mediaContent = item.Element(media + "content")?.Attribute("url")?.Value?.Trim();
+            if (IsGoodUrl(mediaContent)) return mediaContent;
+
+            // media:thumbnail url
+            var mediaThumb = item.Element(media + "thumbnail")?.Attribute("url")?.Value?.Trim();
+            if (IsGoodUrl(mediaThumb)) return mediaThumb;
+
+            // enclosure url if type=image/*
+            var enclosure = item.Element("enclosure");
+            var encUrl = enclosure?.Attribute("url")?.Value?.Trim();
+            var encType = enclosure?.Attribute("type")?.Value?.Trim();
+            if (IsGoodUrl(encUrl) && !string.IsNullOrWhiteSpace(encType) &&
+                encType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                return encUrl;
+
+            // content:encoded or description html img src
+            var html = item.Element(content + "encoded")?.Value ?? item.Element("description")?.Value;
+            if (!string.IsNullOrWhiteSpace(html))
+            {
+                var m = Regex.Match(html, "<img[^>]+src=[\"'](?<src>[^\"']+)[\"']", RegexOptions.IgnoreCase);
+                if (m.Success)
+                {
+                    var src = m.Groups["src"].Value.Trim();
+                    if (IsGoodUrl(src)) return src;
+                }
+            }
+
+            return null;
+        }
+
+        private static string? ExtractAtomImageUrl(XElement entry)
+        {
+            XNamespace media = "http://search.yahoo.com/mrss/";
+
+            var thumb = entry.Descendants(media + "thumbnail")
+                .Select(x => (string?)x.Attribute("url"))
+                .FirstOrDefault(u => !string.IsNullOrWhiteSpace(u))
+                ?.Trim();
+
+            return IsGoodUrl(thumb) ? thumb : null;
+        }
+
+        private static bool IsGoodUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return false;
+            return Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u)
+                   && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps);
+        }
+
+        // =========================
+        // Existing helpers
+        // =========================
 
         private void TouchOk(NewsSource src)
         {
