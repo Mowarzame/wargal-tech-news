@@ -19,25 +19,33 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 Console.WriteLine($"BOOT: Worker starting @ {DateTime.UtcNow:o}");
 
 // Options
-builder.Services.Configure<IngestionOptions>(builder.Configuration.GetSection("Ingestion"));
-builder.Services.Configure<YouTubeOptions>(builder.Configuration.GetSection("YouTube"));
-builder.Services.Configure<RssOptions>(builder.Configuration.GetSection("Rss"));
+builder.Services.Configure<IngestionOptions>(
+    builder.Configuration.GetSection("Ingestion"));
+
+builder.Services.Configure<YouTubeOptions>(
+    builder.Configuration.GetSection("YouTube"));
+
+builder.Services.Configure<RssOptions>(
+    builder.Configuration.GetSection("Rss"));
 
 // Database
 builder.Services.AddDbContext<WorkerDbContext>(opt =>
 {
     var cs = builder.Configuration.GetConnectionString("DefaultConnection");
+
     if (string.IsNullOrWhiteSpace(cs))
-        throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+        throw new InvalidOperationException(
+            "ConnectionStrings:DefaultConnection is not configured.");
 
     opt.UseNpgsql(cs);
 });
 
-// Http client (CRITICAL: enable automatic decompression)
+// Shared ingestion client
 builder.Services.AddHttpClient("ingestion", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
-    c.DefaultRequestHeaders.UserAgent.ParseAdd("WargalNewsWorker/1.0");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "Mozilla/5.0 (compatible; WargalNewsBot/1.0; +https://www.wargalnews.com)");
 })
 .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
@@ -57,19 +65,36 @@ builder.Services.AddHostedService<InternalPostsIngestionService>();
 
 var host = builder.Build();
 
-// Log actual interval values
+// Log actual effective values
 using (var scope = host.Services.CreateScope())
 {
-    var opt = scope.ServiceProvider.GetRequiredService<IOptions<IngestionOptions>>().Value;
-    var yt  = scope.ServiceProvider.GetRequiredService<IOptions<YouTubeOptions>>().Value;
-    var rss = scope.ServiceProvider.GetRequiredService<IOptions<RssOptions>>().Value;
+    var ingestion = scope.ServiceProvider
+        .GetRequiredService<IOptions<IngestionOptions>>().Value;
+
+    var yt = scope.ServiceProvider
+        .GetRequiredService<IOptions<YouTubeOptions>>().Value;
+
+    var rss = scope.ServiceProvider
+        .GetRequiredService<IOptions<RssOptions>>().Value;
 
     Console.WriteLine(
-        $"BOOT: RSS interval={opt.GetRssInterval()} YT interval={opt.GetYouTubeInterval()} " +
-        $"MaxSourcesPerRun={opt.MaxSourcesPerRun} MaxItemsPerSource={opt.MaxItemsPerSource} " +
-        $"MaxParallelFetches={opt.MaxParallelFetches} YT.MaxResults={yt.MaxResults} " +
+        "BOOT: " +
+        $"RSS tick={ingestion.GetRssInterval()} " +
+        $"YouTube tick={ingestion.GetYouTubeInterval()} " +
+        $"News interval={ingestion.GetNewsFetchInterval()} " +
+        $"Default interval={ingestion.GetDefaultFetchInterval()} " +
+        $"YouTube source interval={ingestion.GetYouTubeSourceFetchInterval()} " +
+        $"Error backoff={ingestion.GetErrorBackoff()} " +
+        $"404 backoff={ingestion.GetNotFoundBackoff()} " +
+        $"MaxSourcesPerRun={ingestion.MaxSourcesPerRun} " +
+        $"MaxItemsPerSource={ingestion.MaxItemsPerSource} " +
+        $"MaxParallelFetches={ingestion.MaxParallelFetches} " +
+        $"YT.MaxResults={yt.MaxResults} " +
         $"YT.MinDelayBetweenRequestsMs={yt.MinDelayBetweenRequestsMs} " +
-        $"RSS.TimeoutSec={rss.RequestTimeoutSeconds}");
+        $"YT.MaxChannelsPerRun={yt.MaxChannelsPerRun} " +
+        $"YT.UseRssOnly={yt.UseRssOnly} " +
+        $"RSS.TimeoutSec={rss.RequestTimeoutSeconds} " +
+        $"RSS.DelayBetweenRequestsMs={rss.DelayBetweenRequestsMs}");
 }
 
 host.Run();
@@ -88,6 +113,7 @@ public sealed class WorkerHeartbeatService : BackgroundService
         _logger.LogInformation("HEARTBEAT started @ {NowUtc:o}", DateTime.UtcNow);
 
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             _logger.LogInformation("HEARTBEAT alive @ {NowUtc:o}", DateTime.UtcNow);

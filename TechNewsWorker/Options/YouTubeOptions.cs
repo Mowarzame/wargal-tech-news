@@ -4,10 +4,16 @@ namespace TechNewsWorker.Options
     {
         public int MaxResults { get; set; } = 10;
 
-        // Gentle spacing between requests to YouTube feeds
-        public int MinDelayBetweenRequestsMs { get; set; } = 500;
+        // Gentle spacing between YouTube RSS requests
+        public int MinDelayBetweenRequestsMs { get; set; } = 1500;
 
-        // Kept for backward compatibility (not required by RSS mode)
-        public int ThrottleBackoffMinutes { get; set; } = 10;
+        // Consecutive requests per cycle should remain low
+        public int MaxChannelsPerRun { get; set; } = 10;
+
+        // 404 / unavailable / transient backoff handled in service using this as a base
+        public int ThrottleBackoffMinutes { get; set; } = 15;
+
+        // Safety switch: use RSS only, never Data API
+        public bool UseRssOnly { get; set; } = true;
     }
 }

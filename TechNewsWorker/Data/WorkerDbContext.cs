@@ -5,13 +5,17 @@ namespace TechNewsWorker.Data
 {
     public class WorkerDbContext : DbContext
     {
-        public WorkerDbContext(DbContextOptions<WorkerDbContext> options) : base(options) {}
+        public WorkerDbContext(DbContextOptions<WorkerDbContext> options)
+            : base(options)
+        {
+        }
 
         public DbSet<NewsSource> NewsSources => Set<NewsSource>();
         public DbSet<FeedItem> FeedItems => Set<FeedItem>();
-                // ✅ ADD THESE (read-only usage is fine)
+
+        // Read-only access is fine if these are needed by worker services
         public DbSet<Post> Posts => Set<Post>();
-        public DbSet<User> Users => Set<User>(); // or AppUser depending on your model name
+        public DbSet<User> Users => Set<User>(); // Or AppUser if that is your actual model
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -42,6 +46,10 @@ namespace TechNewsWorker.Data
 
             modelBuilder.Entity<NewsSource>()
                 .HasIndex(s => new { s.IsActive, s.NextFetchAt });
+
+            // Useful when prioritizing by category + due time
+            modelBuilder.Entity<NewsSource>()
+                .HasIndex(s => new { s.IsActive, s.Category, s.NextFetchAt });
         }
     }
 }
