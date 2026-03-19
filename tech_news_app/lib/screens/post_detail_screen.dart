@@ -10,7 +10,6 @@ import '../widgets/post_reaction_bar.dart';
 import '../models/post_reaction_user.dart';
 import '../widgets/post_image_gallery_viewer.dart';
 
-
 class PostDetailScreen extends StatefulWidget {
   final String postId;
   const PostDetailScreen({super.key, required this.postId});
@@ -26,14 +25,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   bool _loading = true;
   String? _error;
   int _likes = 0;
-int _dislikes = 0;
-bool? _myReaction; // true/false/null
-bool _reacting = false;
-
+  int _dislikes = 0;
+  bool? _myReaction;
+  bool _reacting = false;
 
   YoutubePlayerController? _ytController;
 
-  // Comments state
   List<Comment> _comments = [];
   bool _commentsLoading = false;
   String? _commentsError;
@@ -48,70 +45,62 @@ bool _reacting = false;
   }
 
   Future<void> _openReactionsSheet() async {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-    ),
-    builder: (_) => _ReactionsSheet(postId: widget.postId),
-  );
-}
-
-
-Future<void> _load() async {
-  setState(() {
-    _loading = true;
-    _error = null;
-    _commentsError = null;
-  });
-
-  try {
-    // Load post
-    final post = await _api.getPostById(widget.postId);
-
-    // Setup YouTube controller if needed
-    final id = extractYoutubeId(post.videoUrl);
-    if (id != null) {
-      _ytController?.dispose();
-      _ytController = YoutubePlayerController(
-        initialVideoId: id,
-        flags: const YoutubePlayerFlags(
-          autoPlay: false,
-          mute: false,
-          enableCaption: true,
-          controlsVisibleAtStart: true,
-        ),
-      );
-    } else {
-      _ytController?.dispose();
-      _ytController = null;
-    }
-
-    // Load comments
-    final comments = await _api.getCommentsByPostId(widget.postId);
-
-    if (!mounted) return;
-    setState(() {
-      _post = post;
-
-      // ✅ initialize reactions state from Post model
-      _likes = post.likes;
-      _dislikes = post.dislikes;
-      _myReaction = post.myReaction;
-
-      _comments = comments;
-    });
-  } catch (e) {
-    if (!mounted) return;
-    setState(() => _error = e.toString());
-  } finally {
-    if (!mounted) return;
-    setState(() => _loading = false);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => _ReactionsSheet(postId: widget.postId),
+    );
   }
-}
 
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _commentsError = null;
+    });
+
+    try {
+      final post = await _api.getPostById(widget.postId);
+
+      final id = extractYoutubeId(post.videoUrl);
+      if (id != null) {
+        _ytController?.dispose();
+        _ytController = YoutubePlayerController(
+          initialVideoId: id,
+          flags: const YoutubePlayerFlags(
+            autoPlay: false,
+            mute: false,
+            enableCaption: true,
+            controlsVisibleAtStart: true,
+          ),
+        );
+      } else {
+        _ytController?.dispose();
+        _ytController = null;
+      }
+
+      final comments = await _api.getCommentsByPostId(widget.postId);
+
+      if (!mounted) return;
+      setState(() {
+        _post = post;
+        _likes = post.likes;
+        _dislikes = post.dislikes;
+        _myReaction = post.myReaction;
+        _comments = comments;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    } finally {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
 
   Future<void> _reloadComments() async {
     setState(() {
@@ -132,10 +121,6 @@ Future<void> _load() async {
     }
   }
 
-  // If you prefer not adding helper in ApiService, replace _api.getCommentsByPostByIdSafe
-  // with _api.getCommentsByPostId in the method above and delete the helper usage.
-  // I included this so you don't crash if backend returns non-200 with message.
-
   Future<void> _sendComment() async {
     final text = _commentCtrl.text.trim();
     if (text.isEmpty || _sendingComment) return;
@@ -146,7 +131,6 @@ Future<void> _load() async {
       await _api.addComment(postId: widget.postId, content: text);
       _commentCtrl.clear();
 
-      // Refresh comments after posting
       final comments = await _api.getCommentsByPostId(widget.postId);
 
       if (!mounted) return;
@@ -163,102 +147,102 @@ Future<void> _load() async {
   }
 
   Future<void> _onLike() async {
-  if (_reacting) return;
+    if (_reacting) return;
 
-  final prevLikes = _likes;
-  final prevDislikes = _dislikes;
-  final prevReaction = _myReaction;
+    final prevLikes = _likes;
+    final prevDislikes = _dislikes;
+    final prevReaction = _myReaction;
 
-  final bool? target = (_myReaction == true) ? null : true;
+    final bool? target = (_myReaction == true) ? null : true;
 
-  // Optimistic UI
-  setState(() {
-    _reacting = true;
-
-    if (target == null) {
-      _likes = (_likes > 0) ? _likes - 1 : 0;
-      _myReaction = null;
-    } else {
-      if (_myReaction == false) {
-        _dislikes = (_dislikes > 0) ? _dislikes - 1 : 0;
-      }
-      if (_myReaction != true) _likes += 1;
-      _myReaction = true;
-    }
-  });
-
-  try {
-    final summary = await _api.reactToPost(postId: widget.postId, isLike: target);
-    if (!mounted) return;
     setState(() {
-      _likes = (summary['likes'] ?? _likes) as int;
-      _dislikes = (summary['dislikes'] ?? _dislikes) as int;
-      _myReaction = summary['myReaction'];
-    });
-  } catch (e) {
-    if (!mounted) return;
-    setState(() {
-      _likes = prevLikes;
-      _dislikes = prevDislikes;
-      _myReaction = prevReaction;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(e.toString())),
-    );
-  } finally {
-    if (!mounted) return;
-    setState(() => _reacting = false);
-  }
-}
+      _reacting = true;
 
-Future<void> _onDislike() async {
-  if (_reacting) return;
-
-  final prevLikes = _likes;
-  final prevDislikes = _dislikes;
-  final prevReaction = _myReaction;
-
-  final bool? target = (_myReaction == false) ? null : false;
-
-  setState(() {
-    _reacting = true;
-
-    if (target == null) {
-      _dislikes = (_dislikes > 0) ? _dislikes - 1 : 0;
-      _myReaction = null;
-    } else {
-      if (_myReaction == true) {
+      if (target == null) {
         _likes = (_likes > 0) ? _likes - 1 : 0;
+        _myReaction = null;
+      } else {
+        if (_myReaction == false) {
+          _dislikes = (_dislikes > 0) ? _dislikes - 1 : 0;
+        }
+        if (_myReaction != true) _likes += 1;
+        _myReaction = true;
       }
-      if (_myReaction != false) _dislikes += 1;
-      _myReaction = false;
+    });
+
+    try {
+      final summary =
+          await _api.reactToPost(postId: widget.postId, isLike: target);
+      if (!mounted) return;
+      setState(() {
+        _likes = (summary['likes'] ?? _likes) as int;
+        _dislikes = (summary['dislikes'] ?? _dislikes) as int;
+        _myReaction = summary['myReaction'];
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _likes = prevLikes;
+        _dislikes = prevDislikes;
+        _myReaction = prevReaction;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() => _reacting = false);
     }
-  });
-
-  try {
-    final summary = await _api.reactToPost(postId: widget.postId, isLike: target);
-    if (!mounted) return;
-    setState(() {
-      _likes = (summary['likes'] ?? _likes) as int;
-      _dislikes = (summary['dislikes'] ?? _dislikes) as int;
-      _myReaction = summary['myReaction'];
-    });
-  } catch (e) {
-    if (!mounted) return;
-    setState(() {
-      _likes = prevLikes;
-      _dislikes = prevDislikes;
-      _myReaction = prevReaction;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(e.toString())),
-    );
-  } finally {
-    if (!mounted) return;
-    setState(() => _reacting = false);
   }
-}
 
+  Future<void> _onDislike() async {
+    if (_reacting) return;
+
+    final prevLikes = _likes;
+    final prevDislikes = _dislikes;
+    final prevReaction = _myReaction;
+
+    final bool? target = (_myReaction == false) ? null : false;
+
+    setState(() {
+      _reacting = true;
+
+      if (target == null) {
+        _dislikes = (_dislikes > 0) ? _dislikes - 1 : 0;
+        _myReaction = null;
+      } else {
+        if (_myReaction == true) {
+          _likes = (_likes > 0) ? _likes - 1 : 0;
+        }
+        if (_myReaction != false) _dislikes += 1;
+        _myReaction = false;
+      }
+    });
+
+    try {
+      final summary =
+          await _api.reactToPost(postId: widget.postId, isLike: target);
+      if (!mounted) return;
+      setState(() {
+        _likes = (summary['likes'] ?? _likes) as int;
+        _dislikes = (summary['dislikes'] ?? _dislikes) as int;
+        _myReaction = summary['myReaction'];
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _likes = prevLikes;
+        _dislikes = prevDislikes;
+        _myReaction = prevReaction;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() => _reacting = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -270,7 +254,7 @@ Future<void> _onDislike() async {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F7F9), // light grey feed background
+      backgroundColor: const Color(0xFFF6F7F9),
       appBar: AppBar(),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -302,7 +286,6 @@ Future<void> _onDislike() async {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Author row
           Row(
             children: [
               CircleAvatar(
@@ -331,7 +314,7 @@ Future<void> _onDislike() async {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _formatDate(_post!.createdAt),
+                      _timeAgo(_post!.createdAt),
                       style: TextStyle(
                         color: Colors.grey.shade600,
                         fontSize: 12,
@@ -342,10 +325,7 @@ Future<void> _onDislike() async {
               ),
             ],
           ),
-
           const SizedBox(height: 14),
-
-          // Title
           Text(
             _post!.title,
             style: const TextStyle(
@@ -354,17 +334,9 @@ Future<void> _onDislike() async {
               height: 1.2,
             ),
           ),
-
           const SizedBox(height: 14),
 
-          // Hero image
-          if (_post!.allImages.isNotEmpty) ...[
-            _PostDetailImages(images: _post!.allImages),
-            const SizedBox(height: 16),
-          ],
-
-          // Content
-          if (_post!.content.trim().isNotEmpty)
+          if (_post!.content.trim().isNotEmpty) ...[
             Text(
               _post!.content,
               style: TextStyle(
@@ -373,10 +345,15 @@ Future<void> _onDislike() async {
                 color: Colors.grey.shade800,
               ),
             ),
+            const SizedBox(height: 16),
+          ],
 
+          if (_post!.allImages.isNotEmpty) ...[
+            _PostDetailImages(images: _post!.allImages),
+            const SizedBox(height: 16),
+          ],
 
           if (_ytController != null) ...[
-            const SizedBox(height: 18),
             ClipRRect(
               borderRadius: BorderRadius.circular(18),
               child: YoutubePlayer(
@@ -391,134 +368,134 @@ Future<void> _onDislike() async {
     );
   }
 
-  
-
-Widget _buildCommentsCard(BuildContext context) {
-  return Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Text(
-              "Comments",
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-            ),
-            const Spacer(),
-            IconButton(
-              tooltip: "Refresh comments",
-              onPressed: _commentsLoading ? null : _reloadComments,
-              icon: _commentsLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.refresh),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-
-        // ✅ Reactions section (TOP of comments)
-        InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: _openReactionsSheet,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: PostReactionBar(
-                    likes: _likes,
-                    dislikes: _dislikes,
-                    myReaction: _myReaction,
-                    onLike: _onLike,
-                    onDislike: _onDislike,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Icon(Icons.chevron_right_rounded),
-              ],
-            ),
+  Widget _buildCommentsCard(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                "Comments",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: "Refresh comments",
+                onPressed: _commentsLoading ? null : _reloadComments,
+                icon: _commentsLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+              ),
+            ],
           ),
-        ),
-        const Divider(height: 18),
-
-        // ✅ Composer (now clean)
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _commentCtrl,
-                minLines: 1,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: "Write a comment…",
-                  filled: true,
-                  fillColor: const Color(0xFFF4F5F7),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
+          const SizedBox(height: 8),
+          InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: _openReactionsSheet,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: PostReactionBar(
+                      likes: _likes,
+                      dislikes: _dislikes,
+                      myReaction: _myReaction,
+                      onLike: _onLike,
+                      onDislike: _onDislike,
+                    ),
                   ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.chevron_right_rounded),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
-            IconButton(
-              onPressed: _sendingComment ? null : _sendComment,
-              icon: _sendingComment
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.send_rounded),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 12),
-
-        if (_commentsError != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              _commentsError!,
-              style: const TextStyle(color: Color(0xFFB00020)),
-            ),
           ),
-
-        if (_comments.isEmpty && !_commentsLoading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Text("No comments yet. Be the first."),
-          )
-        else
-          ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: _comments.length,
-            separatorBuilder: (_, __) => const Divider(height: 18),
-            itemBuilder: (_, i) => _CommentTile(comment: _comments[i]),
+          const Divider(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _commentCtrl,
+                  minLines: 1,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    hintText: "Write a comment…",
+                    filled: true,
+                    fillColor: const Color(0xFFF4F5F7),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                onPressed: _sendingComment ? null : _sendComment,
+                icon: _sendingComment
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send_rounded),
+              ),
+            ],
           ),
-      ],
-    ),
-  );
-}
+          const SizedBox(height: 12),
+          if (_commentsError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _commentsError!,
+                style: const TextStyle(color: Color(0xFFB00020)),
+              ),
+            ),
+          if (_comments.isEmpty && !_commentsLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Text("No comments yet. Be the first."),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _comments.length,
+              separatorBuilder: (_, __) => const Divider(height: 18),
+              itemBuilder: (_, i) => _CommentTile(comment: _comments[i]),
+            ),
+        ],
+      ),
+    );
+  }
 
+  static String _timeAgo(DateTime dt) {
+    final now = DateTime.now().toUtc();
+    final value = dt.toUtc();
+    final diff = now.difference(value);
 
-  static String _formatDate(DateTime dt) {
-    final y = dt.year.toString();
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    return "$y-$m-$d";
+    if (diff.inSeconds < 60) return "Just now";
+    if (diff.inMinutes < 60) return "${diff.inMinutes}m ago";
+    if (diff.inHours < 24) return "${diff.inHours}h ago";
+    if (diff.inDays < 7) return "${diff.inDays}d ago";
+    if (diff.inDays < 30) return "${(diff.inDays / 7).floor()}w ago";
+    if (diff.inDays < 365) return "${(diff.inDays / 30).floor()}mo ago";
+    return "${(diff.inDays / 365).floor()}y ago";
   }
 }
 
@@ -563,7 +540,10 @@ class _CommentTile extends StatelessWidget {
                 onTap: () => _openProfile(context),
                 child: Text(
                   comment.userName,
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -579,7 +559,7 @@ class _CommentTile extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                _formatTinyDate(comment.createdAt),
+                _timeAgo(comment.createdAt),
                 style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
               ),
             ],
@@ -589,16 +569,20 @@ class _CommentTile extends StatelessWidget {
     );
   }
 
-  static String _formatTinyDate(DateTime dt) {
-    final y = dt.year.toString();
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    return "$y-$m-$d $hh:$mm";
+  static String _timeAgo(DateTime dt) {
+    final now = DateTime.now().toUtc();
+    final value = dt.toUtc();
+    final diff = now.difference(value);
+
+    if (diff.inSeconds < 60) return "Just now";
+    if (diff.inMinutes < 60) return "${diff.inMinutes}m ago";
+    if (diff.inHours < 24) return "${diff.inHours}h ago";
+    if (diff.inDays < 7) return "${diff.inDays}d ago";
+    if (diff.inDays < 30) return "${(diff.inDays / 7).floor()}w ago";
+    if (diff.inDays < 365) return "${(diff.inDays / 30).floor()}mo ago";
+    return "${(diff.inDays / 365).floor()}y ago";
   }
 }
-
 
 class _ErrorView extends StatelessWidget {
   final String error;
@@ -641,82 +625,66 @@ class _PostDetailImages extends StatelessWidget {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (images.length == 1) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: InkWell(
-            onTap: () => _openGallery(context, 0),
-            child: CachedNetworkImage(
-              imageUrl: images[0],
-              fit: BoxFit.cover,
-              placeholder: (_, __) =>
-                  const Center(child: CircularProgressIndicator()),
-              errorWidget: (_, __, ___) =>
-                  const Center(child: Icon(Icons.broken_image)),
-            ),
+  Widget _buildTile(
+    BuildContext context,
+    String imageUrl,
+    int index, {
+    double? aspectRatio,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: AspectRatio(
+        aspectRatio: aspectRatio ?? 16 / 9,
+        child: InkWell(
+          onTap: () => _openGallery(context, index),
+          child: CachedNetworkImage(
+            imageUrl: imageUrl,
+            fit: BoxFit.cover,
+            placeholder: (_, __) =>
+                const Center(child: CircularProgressIndicator()),
+            errorWidget: (_, __, ___) =>
+                const Center(child: Icon(Icons.broken_image)),
           ),
         ),
-      );
-    }
-
-    return SizedBox(
-      height: 340,
-      child: PageView.builder(
-        itemCount: images.length,
-        controller: PageController(viewportFraction: 0.94),
-        itemBuilder: (_, index) {
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: InkWell(
-                onTap: () => _openGallery(context, index),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    CachedNetworkImage(
-                      imageUrl: images[index],
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) =>
-                          const Center(child: CircularProgressIndicator()),
-                      errorWidget: (_, __, ___) =>
-                          const Center(child: Icon(Icons.broken_image)),
-                    ),
-                    Positioned(
-                      right: 12,
-                      bottom: 12,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          "${index + 1}/${images.length}",
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
       ),
     );
   }
+
+  @override
+  Widget build(BuildContext context) {
+    if (images.isEmpty) return const SizedBox.shrink();
+
+    if (images.length == 1) {
+      return _buildTile(context, images[0], 0);
+    }
+
+    if (images.length == 2) {
+      return Row(
+        children: [
+          Expanded(child: _buildTile(context, images[0], 0, aspectRatio: 1)),
+          const SizedBox(width: 8),
+          Expanded(child: _buildTile(context, images[1], 1, aspectRatio: 1)),
+        ],
+      );
+    }
+
+    return GridView.builder(
+      itemCount: images.length,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: 1,
+      ),
+      itemBuilder: (_, index) {
+        return _buildTile(context, images[index], index, aspectRatio: 1);
+      },
+    );
+  }
 }
+
 class _ReactionsSheet extends StatefulWidget {
   final String postId;
   const _ReactionsSheet({required this.postId});
@@ -730,7 +698,7 @@ class _ReactionsSheetState extends State<_ReactionsSheet> {
   bool _loading = true;
   String? _error;
   List<PostReactionUser> _items = [];
-  int _tab = 0; // 0=All, 1=Likes, 2=Dislikes
+  int _tab = 0;
 
   @override
   void initState() {
@@ -803,7 +771,6 @@ class _ReactionsSheetState extends State<_ReactionsSheet> {
                 ],
               ),
               const SizedBox(height: 10),
-
               Row(
                 children: [
                   _TabChip(
@@ -828,9 +795,7 @@ class _ReactionsSheetState extends State<_ReactionsSheet> {
                   ),
                 ],
               ),
-
               const SizedBox(height: 12),
-
               Expanded(
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
@@ -840,31 +805,43 @@ class _ReactionsSheetState extends State<_ReactionsSheet> {
                             ? const Center(child: Text("No reactions yet."))
                             : ListView.separated(
                                 itemCount: filtered.length,
-                                separatorBuilder: (_, __) => const Divider(height: 1),
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1),
                                 itemBuilder: (_, i) {
                                   final u = filtered[i];
                                   return ListTile(
-                                     onTap: () {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => UserProfileScreen(userId: u.userId),
-      ),
-    );
-  },
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => UserProfileScreen(
+                                            userId: u.userId,
+                                          ),
+                                        ),
+                                      );
+                                    },
                                     leading: CircleAvatar(
                                       backgroundColor: Colors.grey.shade200,
-                                      backgroundImage: (u.userPhotoUrl != null && u.userPhotoUrl!.isNotEmpty)
+                                      backgroundImage: (u.userPhotoUrl != null &&
+                                              u.userPhotoUrl!.isNotEmpty)
                                           ? NetworkImage(u.userPhotoUrl!)
                                           : null,
-                                      child: (u.userPhotoUrl == null || u.userPhotoUrl!.isEmpty)
+                                      child: (u.userPhotoUrl == null ||
+                                              u.userPhotoUrl!.isEmpty)
                                           ? const Icon(Icons.person, size: 18)
                                           : null,
                                     ),
-                                    title: Text(u.userName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                    subtitle: Text(u.isLike ? "Liked" : "Disliked"),
+                                    title: Text(
+                                      u.userName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    subtitle:
+                                        Text(u.isLike ? "Liked" : "Disliked"),
                                     trailing: Icon(
-                                      u.isLike ? Icons.thumb_up_alt_rounded : Icons.thumb_down_alt_rounded,
+                                      u.isLike
+                                          ? Icons.thumb_up_alt_rounded
+                                          : Icons.thumb_down_alt_rounded,
                                       size: 18,
                                     ),
                                   );

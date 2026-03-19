@@ -4,11 +4,6 @@ import '../services/api_service.dart';
 import '../widgets/post_card.dart';
 
 class FeedScreen extends StatefulWidget {
-  // Keep these for compatibility with your existing calls (AdminShell/EditorShell old code)
-  // but we no longer use them because:
-  // - AppShell handles titles via AppBar
-  // - Create is a tab now, not a FAB
-  // - Pending verification is only in Moderation tab
   final String? title;
   final bool? canCreate;
   final bool? showVerifyQueue;
@@ -21,11 +16,12 @@ class FeedScreen extends StatefulWidget {
   });
 
   @override
-  State<FeedScreen> createState() => _FeedScreenState();
+  State<FeedScreen> createState() => FeedScreenState();
 }
 
-class _FeedScreenState extends State<FeedScreen> {
+class FeedScreenState extends State<FeedScreen> {
   final _api = ApiService();
+  final ScrollController _scrollController = ScrollController();
 
   List<Post> _posts = [];
   bool _loading = true;
@@ -37,14 +33,40 @@ class _FeedScreenState extends State<FeedScreen> {
     _loadPosts();
   }
 
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void onTabActivated({
+    bool scrollTop = false,
+    bool forceRefresh = false,
+  }) {
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    if (scrollTop && _scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOut,
+      );
+    }
+
+    if (forceRefresh) {
+      _loadPosts();
+    }
+  }
+
   Future<void> _loadPosts() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      // ✅ Normal feed for ALL roles: verified posts only
       final posts = await _api.getPosts();
 
       if (!mounted) return;
@@ -58,50 +80,71 @@ class _FeedScreenState extends State<FeedScreen> {
     }
   }
 
-  Widget _buildBody() {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+  void _dismissKeyboard() {
+    final currentFocus = FocusScope.of(context);
+    if (!currentFocus.hasPrimaryFocus && currentFocus.focusedChild != null) {
+      currentFocus.unfocus();
+    } else {
+      FocusManager.instance.primaryFocus?.unfocus();
     }
+  }
 
-    if (_error != null) {
-      return ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: [
-          const SizedBox(height: 120),
-          Center(child: Text(_error!, textAlign: TextAlign.center)),
-          const SizedBox(height: 12),
-          Center(
-            child: ElevatedButton(
-              onPressed: _loadPosts,
-              child: const Text("Retry"),
-            ),
+  Widget _buildLoading() {
+    return ListView(
+      controller: _scrollController,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: const [
+        SizedBox(height: 220),
+        Center(child: CircularProgressIndicator()),
+      ],
+    );
+  }
+
+  Widget _buildError() {
+    return ListView(
+      controller: _scrollController,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        const SizedBox(height: 120),
+        Center(child: Text(_error!, textAlign: TextAlign.center)),
+        const SizedBox(height: 12),
+        Center(
+          child: ElevatedButton(
+            onPressed: _loadPosts,
+            child: const Text("Retry"),
           ),
-        ],
-      );
-    }
+        ),
+      ],
+    );
+  }
 
-    if (_posts.isEmpty) {
-      return ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: const [
-          SizedBox(height: 140),
-          Center(child: Text("No posts yet")),
-        ],
-      );
-    }
+  Widget _buildEmpty() {
+    return ListView(
+      controller: _scrollController,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: const [
+        SizedBox(height: 140),
+        Center(child: Text("No posts yet")),
+      ],
+    );
+  }
 
-    // ✅ Modern spacing rhythm
+  Widget _buildList() {
     return ListView.separated(
+      controller: _scrollController,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(top: 8, bottom: 20),
       itemCount: _posts.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 2),
+      separatorBuilder: (_, _) => const SizedBox(height: 2),
       itemBuilder: (context, index) {
         final post = _posts[index];
         return PostCard(
           key: ValueKey(post.id),
           post: post,
-          // ✅ Feed should look normal: no moderation badges/actions here
           showAdminVerify: false,
           onVerified: null,
         );
@@ -109,11 +152,22 @@ class _FeedScreenState extends State<FeedScreen> {
     );
   }
 
+  Widget _buildBody() {
+    if (_loading) return _buildLoading();
+    if (_error != null) return _buildError();
+    if (_posts.isEmpty) return _buildEmpty();
+    return _buildList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _loadPosts,
-      child: _buildBody(),
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _dismissKeyboard,
+      child: RefreshIndicator(
+        onRefresh: _loadPosts,
+        child: _buildBody(),
+      ),
     );
   }
 }

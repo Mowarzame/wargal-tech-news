@@ -13,7 +13,7 @@ import '../editor/create_post_screen.dart';
 import '../news_screen.dart';
 
 class AppShell extends StatefulWidget {
-  final String role; // "Admin" | "Editor" | "User"
+  final String role;
   const AppShell({super.key, required this.role});
 
   @override
@@ -24,10 +24,10 @@ class _AppShellState extends State<AppShell> {
   int _index = 0;
   final _auth = AuthService();
 
-  // ✅ Typed keys (fixes: "_NewsScreenState isn't a type")
   final GlobalKey<NewsScreenState> _newsKey = GlobalKey<NewsScreenState>();
   final GlobalKey<BreakingNewsScreenState> _breakingKey =
       GlobalKey<BreakingNewsScreenState>();
+  final GlobalKey<FeedScreenState> _editorsKey = GlobalKey<FeedScreenState>();
 
   bool get isAdmin => widget.role.toLowerCase() == "admin";
   bool get isEditor => widget.role.toLowerCase() == "editor";
@@ -43,6 +43,7 @@ class _AppShellState extends State<AppShell> {
       label: "Editors",
       icon: Icons.groups_outlined,
       page: FeedScreen(
+        key: _editorsKey,
         title: "Editors",
         canCreate: false,
         showVerifyQueue: isAdmin,
@@ -91,14 +92,11 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _activateTab(_NavItem tab, {required bool isRetap}) {
-    // ✅ Always scroll-to-top on BOTH:
-    // - re-tap same tab
-    // - switching into tab from another tab
     if (tab.label == "News") {
       final st = _newsKey.currentState;
       st?.onTabActivated(
         scrollTop: true,
-        forceRefresh: isRetap, // ✅ refresh only on re-tap (keeps UI fast)
+        forceRefresh: isRetap,
         resetSlider: true,
       );
       return;
@@ -108,8 +106,17 @@ class _AppShellState extends State<AppShell> {
       final st = _breakingKey.currentState;
       st?.onTabActivated(
         scrollTop: true,
-        forceRefresh: isRetap, // ✅ refresh only on re-tap
+        forceRefresh: isRetap,
         resetSlider: true,
+      );
+      return;
+    }
+
+    if (tab.label == "Editors") {
+      final st = _editorsKey.currentState;
+      st?.onTabActivated(
+        scrollTop: true,
+        forceRefresh: isRetap,
       );
       return;
     }
@@ -158,16 +165,14 @@ class _AppShellState extends State<AppShell> {
         onTap: (i) {
           final tappedTab = tabs[i];
 
-          // ✅ Re-tap same tab: activate (scrollTop + optional refresh)
           if (i == _index) {
             _activateTab(tappedTab, isRetap: true);
             return;
           }
 
-          // ✅ Switch tab then activate after frame
           setState(() => _index = i);
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            _activateTab(tappedTab, isRetap: false); // ✅ also scrollTop on switch
+            _activateTab(tappedTab, isRetap: false);
           });
         },
         items: tabs
@@ -211,8 +216,10 @@ class _AppDrawer extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           children: [
             const SizedBox(height: 8),
-            const Text("Wargal",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            const Text(
+              "Wargal",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
             const SizedBox(height: 6),
             Text("Role: $role", style: TextStyle(color: Colors.grey.shade700)),
             const SizedBox(height: 14),

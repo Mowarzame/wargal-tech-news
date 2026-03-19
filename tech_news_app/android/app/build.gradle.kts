@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
+    id("com.google.gms.google-services")
 }
 
 val keystoreProperties = Properties()
@@ -58,13 +59,10 @@ android {
                     """
                     Missing release signing config.
                     Create android/key.properties with:
-                      storeFile=<your-upload-keystore-file.jks>
+                      storeFile=/absolute/path/to/your-upload-keystore-file.jks
                       storePassword=...
                       keyAlias=...
                       keyPassword=...
-
-                    And place the keystore at:
-                      android/app/<storeFile>
 
                     IMPORTANT:
                     Play expects your AAB to be signed with the Upload key certificate SHA-1:
@@ -75,21 +73,19 @@ android {
 
             keyAlias = keyAliasVal!!
             keyPassword = keyPasswordVal!!
-            storeFile = rootProject.file("app/$storeFileVal")
+            storeFile = file(storeFileVal!!)
             storePassword = storePasswordVal!!
         }
     }
 
     buildTypes {
         release {
-            // ✅ Always use the upload keystore for release
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             isShrinkResources = false
         }
 
         debug {
-            // default debug signing
         }
     }
 }

@@ -2,6 +2,10 @@ import java.util.Properties
 import org.gradle.api.tasks.Delete
 import org.gradle.api.file.Directory
 
+plugins {
+    id("com.google.gms.google-services") version "4.4.2" apply false
+}
+
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {

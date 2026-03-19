@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "721609947712",
+    "project_id": "wargal-2e694",
+    "storage_bucket": "wargal-2e694.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:721609947712:android:ae3a0385c46952ae1c7da5",
+        "android_client_info": {
+          "package_name": "com.wargalstudio.wargalnews"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyABUAy3o3ZT--nQBevsBDIoHfU6ja7x8qg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -167,7 +167,7 @@ export default function CommunityShell() {
             {/* CENTER: Feed */}
             <Box sx={{ minWidth: 0 }}>
               <Typography variant="h6" fontWeight={900} sx={{ mb: 1 }}>
-                Community
+                Wargal News + Audience Interaction
               </Typography>
 
               {/* composer */}

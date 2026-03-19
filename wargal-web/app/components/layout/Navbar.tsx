@@ -90,7 +90,7 @@ export default function Navbar() {
     };
   }, []);
 
-const NAV_ROUTES = ["/", "/community"];
+const NAV_ROUTES = ["/", "/editors"];
 const tabValue = React.useMemo(() => {
   if (!pathname) return false;
   return NAV_ROUTES.includes(pathname) ? pathname : false;
@@ -132,9 +132,9 @@ const tabValue = React.useMemo(() => {
   };
 
   const go = (path: string) => {
-    // ✅ Gate community access behind auth
-    if (path === "/community" && isReady && !isAuthed) {
-      openLogin("Sign-in is required to access the Community page.");
+    // ✅ Gate editors access behind auth
+    if (path === "/editors" && isReady && !isAuthed) {
+      openLogin("Sign-in is required to access the editors page.");
       return;
     }
     router.push(path);
@@ -142,22 +142,22 @@ const tabValue = React.useMemo(() => {
 
   const onTabChange = (_: any, v: string) => go(v);
 
-  const goCommunityFromMenu = () => {
+  const goeditorsFromMenu = () => {
     onCloseMenu();
     if (isReady && !isAuthed) {
-      openLogin("Sign-in is required to access the Community page.");
+      openLogin("Sign-in is required to access the editors page.");
       return;
     }
-    router.push("/community");
+    router.push("/editors");
   };
 
-  const goCommunityFromDrawer = () => {
+  const goeditorsFromDrawer = () => {
     closeDrawer();
     if (isReady && !isAuthed) {
-      openLogin("Sign-in is required to access the Community page.");
+      openLogin("Sign-in is required to access the editors page.");
       return;
     }
-    router.push("/community");
+    router.push("/editors");
   };
 
   // ✅ Always reserve a stable right-side width to prevent navbar shifting on reload/hydration
@@ -205,7 +205,7 @@ const tabValue = React.useMemo(() => {
             }}
           >
             <Tab label="News" value="/" />
-            <Tab label="Community" value="/community" />
+            <Tab label="Editors" value="/editors" />
         
           </Tabs>
         </Box>
@@ -300,8 +300,8 @@ const tabValue = React.useMemo(() => {
                   >
                     News
                   </MenuItem>
-                  <MenuItem onClick={goCommunityFromMenu} sx={{ fontWeight: 900 }}>
-                    Community
+                  <MenuItem onClick={goeditorsFromMenu} sx={{ fontWeight: 900 }}>
+                    editors
                   </MenuItem>
     
 
@@ -355,8 +355,8 @@ const tabValue = React.useMemo(() => {
             <ListItemText primary="News" primaryTypographyProps={{ fontWeight: 900 }} />
           </ListItemButton>
 
-          <ListItemButton onClick={goCommunityFromDrawer}>
-            <ListItemText primary="Community" primaryTypographyProps={{ fontWeight: 900 }} />
+          <ListItemButton onClick={goeditorsFromDrawer}>
+            <ListItemText primary="Editors" primaryTypographyProps={{ fontWeight: 900 }} />
           </ListItemButton>
 
    
@@ -396,7 +396,7 @@ const tabValue = React.useMemo(() => {
 
         <Box sx={{ p: 2 }}>
           <Typography variant="caption" color="text.secondary">
-            Wargal News · Somali tech/news aggregator + community
+            Wargal News · Somali tech/news aggregator + editors
           </Typography>
         </Box>
       </Drawer>
@@ -417,7 +417,7 @@ const tabValue = React.useMemo(() => {
                   await loginWithGoogleProfile(profile);
                   setLoginOpen(false);
                   setLoginHint(null);
-                  router.push("/community");
+                  router.push("/editors");
                 } catch (e: any) {
                   setLoginError(e?.message ?? "Login failed");
                 }

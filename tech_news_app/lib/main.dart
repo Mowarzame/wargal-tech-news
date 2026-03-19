@@ -1,4 +1,7 @@
-// File: lib/main.dart
+import 'dart:io' show Platform;
+
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -8,10 +11,15 @@ import 'providers/news_provider.dart';
 import 'services/api_service.dart';
 import 'screens/role_router.dart';
 
+final FirebaseAnalytics firebaseAnalytics = FirebaseAnalytics.instance;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ CRITICAL: lock portrait BEFORE runApp
+  if (Platform.isAndroid) {
+    await Firebase.initializeApp();
+  }
+
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
@@ -24,6 +32,8 @@ Future<void> main() async {
         ChangeNotifierProvider<NewsProvider>(
           create: (context) => NewsProvider(context.read<ApiService>()),
         ),
+        if (Platform.isAndroid)
+          Provider<FirebaseAnalytics>.value(value: firebaseAnalytics),
       ],
       child: const TechNewsApp(),
     ),
@@ -56,6 +66,9 @@ class TechNewsApp extends StatelessWidget {
           surfaceTintColor: Colors.transparent,
         ),
       ),
+      navigatorObservers: Platform.isAndroid
+          ? [FirebaseAnalyticsObserver(analytics: firebaseAnalytics)]
+          : [],
       home: const _AppStartup(),
     );
   }
@@ -97,6 +110,12 @@ class _AppStartupState extends State<_AppStartup>
       if (!mounted) return;
       await context.read<NewsProvider>().warmup();
     });
+
+    if (Platform.isAndroid) {
+      Future.microtask(() async {
+        await firebaseAnalytics.logAppOpen();
+      });
+    }
   }
 
   @override

@@ -24,7 +24,7 @@ import ForumOutlinedIcon from "@mui/icons-material/ForumOutlined";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/app/providers/AuthProvider";
 import TopSideBar from "@/app/components/news/TopSidebar";
-import { fetchFeedItems } from "@/app/lib/api";
+import { fetchFeedItems , getPostImages } from "@/app/lib/api";
 import TimeAgo from "@/app/components/common/TimeAgo";
 
 type UserDto = {
@@ -472,6 +472,7 @@ export default function PostDetailShell({ postId }: { postId: string }) {
 
   const post = postQuery.data;
   const canInteract = isReady && isAuthed;
+    const postImages = getPostImages(post);
 
   const myReaction = post?.myReaction ?? null;
   const likes = post?.likes ?? 0;
@@ -605,33 +606,9 @@ export default function PostDetailShell({ postId }: { postId: string }) {
                         )}
 
                         {/* ✅ Image (FULL): contain, no crop */}
-                        {!!clean(post.imageUrl) && (
-                          <Box
-                            sx={{
-                              mt: 1.5,
-                              width: "100%",
-                              borderRadius: 2,
-                              border: "1px solid",
-                              borderColor: "divider",
-                              overflow: "hidden",
-                              bgcolor: "grey.100",
-                            }}
-                          >
-                            <Box
-                              component="img"
-                              src={clean(post.imageUrl)}
-                              alt=""
-                              loading="lazy"
-                              decoding="async"
-                              sx={{
-                                width: "100%",
-                                height: { xs: "auto", sm: 520 },
-                                maxHeight: 520,
-                                display: "block",
-                                objectFit: "contain",
-                                bgcolor: "grey.100",
-                              }}
-                            />
+                                   {postImages.length > 0 && (
+                          <Box sx={{ mt: 1.5 }}>
+                            <PostDetailImages images={postImages} />
                           </Box>
                         )}
 
@@ -907,6 +884,171 @@ export default function PostDetailShell({ postId }: { postId: string }) {
           )}
         </DialogContent>
       </Dialog>
+    </Box>
+  );
+}
+
+function PostDetailImages({ images }: { images: string[] }) {
+  const [open, setOpen] = React.useState(false);
+  const [index, setIndex] = React.useState(0);
+
+  const openAt = (i: number) => {
+    setIndex(i);
+    setOpen(true);
+  };
+
+  return (
+    <>
+      {images.length === 1 ? (
+        <DetailImageTile src={images[0]} onClick={() => openAt(0)} large />
+      ) : images.length === 2 ? (
+        <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>
+          <DetailImageTile src={images[0]} onClick={() => openAt(0)} />
+          <DetailImageTile src={images[1]} onClick={() => openAt(1)} />
+        </Box>
+      ) : (
+        <>
+          <Box sx={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 1 }}>
+            <DetailImageTile src={images[0]} onClick={() => openAt(0)} large />
+
+            <Box sx={{ display: "grid", gridTemplateRows: "1fr 1fr", gap: 1 }}>
+              <DetailImageTile src={images[1]} onClick={() => openAt(1)} />
+              <DetailImageTile
+                src={images[2]}
+                onClick={() => openAt(2)}
+                overlay={images.length > 3 ? `+${images.length - 3}` : undefined}
+              />
+            </Box>
+          </Box>
+
+          {images.length > 3 && (
+            <Box
+              sx={{
+                mt: 1,
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr 1fr", sm: "1fr 1fr 1fr" },
+                gap: 1,
+              }}
+            >
+              {images.slice(3).map((src, idx) => (
+                <DetailImageTile
+                  key={`${src}-${idx}`}
+                  src={src}
+                  onClick={() => openAt(idx + 3)}
+                  small
+                />
+              ))}
+            </Box>
+          )}
+        </>
+      )}
+
+      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="lg">
+        <DialogTitle sx={{ fontWeight: 950, pr: 6 }}>
+          Photos
+          <IconButton
+            onClick={() => setOpen(false)}
+            aria-label="Close photos"
+            sx={{ position: "absolute", right: 10, top: 10 }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+
+        <DialogContent>
+          <Box
+            sx={{
+              width: "100%",
+              height: { xs: 320, sm: 520, md: 620 },
+              bgcolor: "common.black",
+              borderRadius: 2,
+              overflow: "hidden",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Box
+              component="img"
+              src={images[index]}
+              alt=""
+              sx={{ width: "100%", height: "100%", objectFit: "contain" }}
+            />
+          </Box>
+
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.25 }}>
+            <Button onClick={() => setIndex((v) => Math.max(0, v - 1))} disabled={index === 0}>
+              Prev
+            </Button>
+            <Typography sx={{ flex: 1, textAlign: "center", fontWeight: 900 }}>
+              {images.length ? `${index + 1} / ${images.length}` : "0 / 0"}
+            </Typography>
+            <Button
+              onClick={() => setIndex((v) => Math.min(images.length - 1, v + 1))}
+              disabled={index >= images.length - 1}
+            >
+              Next
+            </Button>
+          </Stack>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function DetailImageTile({
+  src,
+  onClick,
+  overlay,
+  large = false,
+  small = false,
+}: {
+  src: string;
+  onClick: () => void;
+  overlay?: string;
+  large?: boolean;
+  small?: boolean;
+}) {
+  return (
+    <Box
+      onClick={onClick}
+      sx={{
+        position: "relative",
+        cursor: "pointer",
+        borderRadius: 2,
+        overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "grey.100",
+        minHeight: small ? 140 : large ? 380 : 220,
+      }}
+    >
+      <Box
+        component="img"
+        src={src}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        sx={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+      />
+
+      {overlay && (
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            bgcolor: "rgba(0,0,0,0.42)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "common.white",
+            fontWeight: 950,
+            fontSize: 32,
+          }}
+        >
+          {overlay}
+        </Box>
+      )}
     </Box>
   );
 }

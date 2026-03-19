@@ -30,6 +30,10 @@ class _PostCardState extends State<PostCard> {
   final ApiService _api = ApiService();
   final TextEditingController _commentCtrl = TextEditingController();
 
+  // ✅ lightweight in-memory cache per post
+  static final Map<String, List<Comment>> _commentsCache = {};
+  static final Map<String, DateTime> _commentsCacheTime = {};
+
   late int _likes;
   late int _dislikes;
   late bool? _myReaction;
@@ -49,6 +53,15 @@ class _PostCardState extends State<PostCard> {
     _likes = post.likes;
     _dislikes = post.dislikes;
     _myReaction = post.myReaction;
+    _bootstrapComments();
+  }
+
+  void _bootstrapComments() {
+    final cached = _commentsCache[post.id];
+    if (cached != null) {
+      _comments = cached;
+      return;
+    }
     _loadComments();
   }
 
@@ -58,7 +71,19 @@ class _PostCardState extends State<PostCard> {
     super.dispose();
   }
 
-  Future<void> _loadComments() async {
+  Future<void> _loadComments({bool forceRefresh = false}) async {
+    if (!forceRefresh && _commentsCache.containsKey(post.id)) {
+      final cached = _commentsCache[post.id]!;
+      if (mounted) {
+        setState(() {
+          _comments = cached;
+          _commentsLoading = false;
+          _commentsError = null;
+        });
+      }
+      return;
+    }
+
     setState(() {
       _commentsLoading = true;
       _commentsError = null;
@@ -67,6 +92,10 @@ class _PostCardState extends State<PostCard> {
     try {
       final comments = await _api.getCommentsByPostId(post.id);
       if (!mounted) return;
+
+      _commentsCache[post.id] = comments;
+      _commentsCacheTime[post.id] = DateTime.now();
+
       setState(() {
         _comments = comments;
       });
@@ -92,7 +121,16 @@ class _PostCardState extends State<PostCard> {
     try {
       await _api.addComment(postId: post.id, content: text);
       _commentCtrl.clear();
-      await _loadComments();
+
+      final comments = await _api.getCommentsByPostId(post.id);
+      if (!mounted) return;
+
+      _commentsCache[post.id] = comments;
+      _commentsCacheTime[post.id] = DateTime.now();
+
+      setState(() {
+        _comments = comments;
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -497,7 +535,7 @@ class _PostCardState extends State<PostCard> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  if (hasPreview)
+                      if (hasPreview) ...[
                     Text(
                       post.content,
                       maxLines: 3,
@@ -508,6 +546,20 @@ class _PostCardState extends State<PostCard> {
                         fontSize: 13.5,
                       ),
                     ),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        onPressed: () => _openPost(context),
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text("Read more"),
+                      ),
+                    ),
+                  ],
                   if (post.hasImages) ...[
                     const SizedBox(height: 12),
                     _buildImages(context),
@@ -551,44 +603,6 @@ class _PostCardState extends State<PostCard> {
               ),
             ),
 
-            const SizedBox(height: 10),
-
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _commentCtrl,
-                    minLines: 1,
-                    maxLines: 3,
-                    decoration: InputDecoration(
-                      hintText: "Write a comment…",
-                      filled: true,
-                      fillColor: const Color(0xFFF4F5F7),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: _sendingComment ? null : _sendComment,
-                  icon: _sendingComment
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.send_rounded),
-                ),
-              ],
-            ),
-
             const SizedBox(height: 12),
 
             if (_commentsError != null)
@@ -630,6 +644,44 @@ class _PostCardState extends State<PostCard> {
                   ],
                 ],
               ),
+
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _commentCtrl,
+                    minLines: 1,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      hintText: "Write a comment…",
+                      filled: true,
+                      fillColor: const Color(0xFFF4F5F7),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: _sendingComment ? null : _sendComment,
+                  icon: _sendingComment
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.send_rounded),
+                ),
+              ],
+            ),
           ],
         ),
       ),

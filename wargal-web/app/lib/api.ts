@@ -23,7 +23,6 @@ function clean(s?: string | null) {
   return (s ?? "").trim();
 }
 
-// ✅ Same idea as Flutter _authHeaderOnly()
 function authHeaderOnly(): Record<string, string> {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -50,6 +49,82 @@ export type PostReactionUserDto = {
   isLike: boolean;
   createdAt: string;
 };
+
+export type UserLoginDto = {
+  name: string;
+  email: string;
+  profilePictureUrl?: string | null;
+};
+
+export type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+  profilePictureUrl?: string | null;
+  role: string;
+};
+
+export type LoginResponse = {
+  token: string;
+  user: AuthUser;
+};
+
+export type PostDto = {
+  id: string;
+  title: string;
+  content?: string | null;
+  imageUrl?: string | null;
+  imageUrls?: string[] | null;
+  allImages?: string[] | null;
+  videoUrl?: string | null;
+  user: AuthUser;
+  createdAt: string;
+  isVerified: boolean;
+  likes: number;
+  dislikes: number;
+  myReaction?: boolean | null;
+  commentsCount: number;
+};
+
+export type CommentDto = {
+  id: string;
+  postId: string;
+  userId: string;
+  userName: string;
+  userPhotoUrl?: string | null;
+  content: string;
+  createdAt: string;
+};
+
+function unwrapOne<T>(json: any): T | null {
+  if (!json) return null;
+  if (json?.data && typeof json.data === "object") return json.data as T;
+  return json as T;
+}
+
+export function getPostImages(post?: {
+  imageUrl?: string | null;
+  imageUrls?: string[] | null;
+  allImages?: string[] | null;
+} | null): string[] {
+  const raw = [
+    ...(Array.isArray(post?.allImages) ? post!.allImages! : []),
+    ...(Array.isArray(post?.imageUrls) ? post!.imageUrls! : []),
+    clean(post?.imageUrl),
+  ];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const v of raw) {
+    const x = clean(v);
+    if (!x || seen.has(x)) continue;
+    seen.add(x);
+    out.push(x);
+  }
+
+  return out;
+}
 
 /* =========================
    FEED (PUBLIC)
@@ -79,23 +154,18 @@ export async function fetchFeedSources(): Promise<NewsSource[]> {
 }
 
 export async function fetchFeedItems(params?: {
-  page?: number;          // starting page (default 1)
-  pageSize?: number;      // requested target count for frontend (we still page at 50)
+  page?: number;
+  pageSize?: number;
   kind?: string;
   sourceId?: string;
   q?: string;
   diverse?: boolean;
-
-  // ✅ NEW: frontend-only window
-  sinceDays?: number;     // default 3
-  maxPages?: number;      // safety cap (default 12)
+  sinceDays?: number;
+  maxPages?: number;
 }): Promise<NewsItem[]> {
   const startPage = Math.max(1, Number(params?.page ?? 1));
   const targetCount = Math.max(1, Number(params?.pageSize ?? 60));
-
-  // ✅ Backend enforces pageSize <= 50, so we page at 50 always
   const backendPageSize = 50;
-
   const sinceDays = Math.max(1, Number(params?.sinceDays ?? 3));
   const maxPages = Math.max(1, Math.min(40, Number(params?.maxPages ?? 12)));
 
@@ -120,8 +190,6 @@ export async function fetchFeedItems(params?: {
     if (params?.sourceId) qs.set("sourceId", String(params.sourceId));
     if (params?.q) qs.set("q", String(params.q));
     if (params?.diverse) qs.set("diverse", "true");
-
-    // cache-buster (safe)
     qs.set("_ts", String(Date.now()));
 
     const url = `${API_BASE}/feed-items?${qs.toString()}`;
@@ -141,33 +209,23 @@ export async function fetchFeedItems(params?: {
     if (!rawList.length) break;
 
     const normalized = rawList.filter(Boolean).map(normalizeFeedItem).filter(Boolean);
-
-    // ✅ Keep only within sinceDays (frontend window)
     const windowed = normalized.filter((x) => isWithinDays((x as any)?.publishedAt, sinceDays));
 
-    // Add windowed items
     for (const it of windowed) add(it);
 
-    // ✅ Stop conditions:
-    // 1) we already got enough items for UI
     if (out.length >= targetCount) break;
 
-    // 2) if the OLDEST item in this page is older than sinceDays, next pages will be older → stop
     const last = normalized[normalized.length - 1];
     if (last && !isWithinDays((last as any)?.publishedAt, sinceDays)) break;
 
-    // 3) else keep paging
     page++;
   }
 
-  // Ensure newest first (backend is already desc, but after filtering/dedupe we re-sort)
   out.sort((a: any, b: any) => clean(b?.publishedAt).localeCompare(clean(a?.publishedAt)));
-
   return out;
 }
 
 export async function getFeedItems(): Promise<NewsItem[]> {
-  // ✅ Default: last 3 days, enough items for homepage
   return fetchFeedItems({ page: 1, pageSize: 200, sinceDays: 3, maxPages: 12 });
 }
 
@@ -176,33 +234,8 @@ export async function getFeedSources(): Promise<NewsSource[]> {
 }
 
 /* =========================
-   AUTH (GOOGLE -> API JWT)
+   AUTH
 ========================= */
-export type UserLoginDto = {
-  name: string;
-  email: string;
-  profilePictureUrl?: string | null;
-};
-
-export type AuthUser = {
-  id: string;
-  name: string;
-  email: string;
-  profilePictureUrl?: string | null;
-  role: string;
-};
-
-export type LoginResponse = {
-  token: string;
-  user: AuthUser;
-};
-
-function unwrapOne<T>(json: any): T | null {
-  if (!json) return null;
-  if (json?.data && typeof json.data === "object") return json.data as T;
-  return json as T;
-}
-
 export async function loginGoogle(dto: UserLoginDto): Promise<LoginResponse> {
   const res = await fetch(`${API_BASE}/users/login-google`, {
     method: "POST",
@@ -227,31 +260,6 @@ export async function fetchMe(): Promise<AuthUser | null> {
 /* =========================
    COMMUNITY (POSTS)
 ========================= */
-export type PostDto = {
-  id: string;
-  title: string;
-  content?: string | null;
-  imageUrl?: string | null;
-  videoUrl?: string | null;
-  user: AuthUser;
-  createdAt: string;
-  isVerified: boolean;
-  likes: number;
-  dislikes: number;
-  myReaction?: boolean | null;
-  commentsCount: number;
-};
-
-export type CommentDto = {
-  id: string;
-  postId: string;
-  userId: string;
-  userName: string;
-  userPhotoUrl?: string | null;
-  content: string;
-  createdAt: string;
-};
-
 export async function fetchPosts(): Promise<PostDto[]> {
   const res = await fetch(`${API_BASE}/posts`, {
     cache: "no-store",
@@ -305,7 +313,7 @@ export async function createPostWithImage(args: {
   title: string;
   content: string;
   videoUrl?: string | null;
-  imageFile?: File | null;
+  imageFiles?: File[] | null;
 }): Promise<PostDto> {
   const uri = `${API_BASE}/posts/with-image`;
 
@@ -316,13 +324,13 @@ export async function createPostWithImage(args: {
   const v = clean(args.videoUrl ?? "");
   if (v) form.append("VideoUrl", v);
 
-  if (args.imageFile) {
-    form.append("Image", args.imageFile, args.imageFile.name);
+  for (const file of args.imageFiles ?? []) {
+    form.append("Images", file, file.name);
   }
 
   const res = await fetch(uri, {
     method: "POST",
-    headers: { ...authHeaderOnly() }, // ✅ DO NOT set Content-Type manually
+    headers: { ...authHeaderOnly() },
     body: form,
   });
 
@@ -339,7 +347,6 @@ export async function createPostWithImage(args: {
 
   return (json?.data ?? json) as PostDto;
 }
-
 export async function reactToPost(
   postId: string,
   isLike: boolean | null
