@@ -13,7 +13,16 @@ namespace TechNewsApi.Helpers
             CreateMap<UserLoginDto, User>();
 
             // Posts
-            CreateMap<Post, PostDto>();
+              CreateMap<Post, PostDto>()
+                .ForMember(
+                    d => d.ImageUrls,
+                    opt => opt.MapFrom(s => s.PostImages
+                        .OrderBy(x => x.SortOrder)
+                        .Select(x => x.ImageUrl)
+                        .ToList())
+                );
+
+            CreateMap<PostCreateDto, Post>();
             CreateMap<PostCreateDto, Post>();
 
             // Comments

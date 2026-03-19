@@ -133,9 +133,9 @@ public async Task<IActionResult> UnverifyPost(Guid id)
             return result.Success ? Ok(result) : BadRequest(result);
         }
         [Authorize]
-        [HttpPost("with-image")]
-        [Consumes("multipart/form-data")]
-        public async Task<IActionResult> CreatePostWithImage([FromForm] PostCreateFormDto dto)
+[HttpPost("with-image")]
+[Consumes("multipart/form-data")]
+public async Task<IActionResult> CreatePostWithImage([FromForm] PostCreateFormDto dto)
         {
             var result = await _postRepository.CreatePostWithImageAsync(dto);
 

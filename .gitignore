@@ -58,6 +58,11 @@ tech_news_app/build/
 # Flutter/Android tooling + logs/archives
 **/bugreport-*.zip
 
+# 🔒 Android signing (CRITICAL)
+tech_news_app/android/key.properties
+tech_news_app/wargal-upload-key.jks
+tech_news_app/upload_certificate.pem
+
 # ==========================================================
 # Docker
 # ==========================================================

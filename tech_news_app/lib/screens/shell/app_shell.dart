@@ -40,10 +40,10 @@ class _AppShellState extends State<AppShell> {
     );
 
     final explore = _NavItem(
-      label: "Articles",
+      label: "Editors",
       icon: Icons.groups_outlined,
       page: FeedScreen(
-        title: "Articles",
+        title: "Editors",
         canCreate: false,
         showVerifyQueue: isAdmin,
       ),

@@ -24,7 +24,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   final _contentFocus = FocusNode();
   final _videoFocus = FocusNode();
 
-  File? _selectedImage;
+  final List<File> _selectedImages = [];
   bool _isLoading = false;
 
   final ImagePicker _picker = ImagePicker();
@@ -41,14 +41,25 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     super.dispose();
   }
 
-  Future<void> pickImage() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (!mounted) return;
-    if (picked != null) {
-      setState(() {
-        _selectedImage = File(picked.path);
-      });
-    }
+  Future<void> pickImages() async {
+    final picked = await _picker.pickMultiImage(imageQuality: 90);
+    if (!mounted || picked.isEmpty) return;
+
+    final next = picked.map((x) => File(x.path)).toList();
+
+    setState(() {
+      for (final file in next) {
+        final exists = _selectedImages.any((e) => e.path == file.path);
+        if (!exists) {
+          _selectedImages.add(file);
+        }
+      }
+    });
+  }
+
+  void removeImageAt(int index) {
+    if (index < 0 || index >= _selectedImages.length) return;
+    setState(() => _selectedImages.removeAt(index));
   }
 
   Future<void> submitPost() async {
@@ -64,18 +75,16 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     }
 
     FocusManager.instance.primaryFocus?.unfocus();
-
     setState(() => _isLoading = true);
 
     try {
-      // ✅ Use the singleton ApiService from Provider (don’t create new instances)
       final api = context.read<ApiService>();
 
       await api.createPostWithImage(
         title: title,
         content: content,
         videoUrl: videoUrl,
-        imageFile: _selectedImage,
+        imageFiles: _selectedImages,
       );
 
       if (!mounted) return;
@@ -84,12 +93,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         const SnackBar(content: Text("Post submitted for review")),
       );
 
-      // ✅ Clear form
       _titleController.clear();
       _contentController.clear();
       _videoUrlController.clear();
+
       setState(() {
-        _selectedImage = null;
+        _selectedImages.clear();
       });
 
       widget.onPostCreated?.call();
@@ -103,6 +112,63 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     }
   }
 
+  Widget _buildSelectedImagesPreview() {
+    if (_selectedImages.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Selected images (${_selectedImages.length})",
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        GridView.builder(
+          itemCount: _selectedImages.length,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+          ),
+          itemBuilder: (_, index) {
+            final file = _selectedImages[index];
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(file, fit: BoxFit.cover),
+                  ),
+                ),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: InkWell(
+                    onTap: _isLoading ? null : () => removeImageAt(index),
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        color: Colors.black54,
+                        shape: BoxShape.circle,
+                      ),
+                      padding: const EdgeInsets.all(4),
+                      child: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -111,7 +177,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         behavior: HitTestBehavior.translucent,
         onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
         child: SingleChildScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag, // ✅ swipe down to dismiss
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
@@ -135,23 +201,26 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 controller: _videoUrlController,
                 focusNode: _videoFocus,
                 textInputAction: TextInputAction.done,
-                onEditingComplete: () => FocusManager.instance.primaryFocus?.unfocus(),
-                decoration: const InputDecoration(labelText: "YouTube URL (optional)"),
+                onEditingComplete: () =>
+                    FocusManager.instance.primaryFocus?.unfocus(),
+                decoration:
+                    const InputDecoration(labelText: "YouTube URL (optional)"),
               ),
               const SizedBox(height: 16),
 
-              if (_selectedImage != null)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.file(_selectedImage!, height: 180),
-                ),
+              _buildSelectedImagesPreview(),
+              if (_selectedImages.isNotEmpty) const SizedBox(height: 12),
 
-              const SizedBox(height: 8),
-
-              OutlinedButton.icon(
-                onPressed: _isLoading ? null : pickImage,
-                icon: const Icon(Icons.image),
-                label: const Text("Pick Image"),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _isLoading ? null : pickImages,
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: const Text("Pick Images"),
+                    ),
+                  ),
+                ],
               ),
 
               const SizedBox(height: 24),
@@ -171,7 +240,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                         )
                       : const Text("Submit Post"),
                 ),
-              )
+              ),
             ],
           ),
         ),

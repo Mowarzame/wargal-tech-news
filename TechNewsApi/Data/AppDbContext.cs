@@ -15,6 +15,7 @@ namespace TechNewsApi.Data
         public DbSet<PostLike> PostLikes => Set<PostLike>();
         public DbSet<NewsSource> NewsSources => Set<NewsSource>();
         public DbSet<FeedItem> FeedItems => Set<FeedItem>();
+        public DbSet<PostImage> PostImages => Set<PostImage>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -40,6 +41,13 @@ namespace TechNewsApi.Data
                 .WithMany()
                 .HasForeignKey(c => c.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
+                            modelBuilder.Entity<PostImage>()
+                .HasOne(pi => pi.Post)
+                .WithMany(p => p.PostImages)
+                .HasForeignKey(pi => pi.PostId)
+                .OnDelete(DeleteBehavior.Cascade);
+                            modelBuilder.Entity<PostImage>()
+                .HasIndex(pi => new { pi.PostId, pi.SortOrder });
 
             modelBuilder.Entity<PostLike>()
                 .HasOne(pl => pl.Post)

@@ -27,5 +27,8 @@ namespace TechNewsCore.Models
         public List<Comment> Comments { get; set; } = new();
     public ICollection<PostLike> PostLikes { get; set; } = new List<PostLike>();
 
+        // NEW
+        public ICollection<PostImage> PostImages { get; set; } = new List<PostImage>();
+
     }
 }

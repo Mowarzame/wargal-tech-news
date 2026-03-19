@@ -48,6 +48,22 @@ namespace TechNewsApi.Repositories
 
     return (Guid.Parse(userIdClaim.Value), roleClaim.Value);
 }
+
+private async Task<List<string>> UploadImagesToSupabaseAsync(
+    IEnumerable<IFormFile> files,
+    Guid userId)
+{
+    var results = new List<string>();
+
+    foreach (var file in files)
+    {
+        if (file.Length <= 0) continue;
+        var url = await UploadImageToSupabaseAsync(file, userId);
+        results.Add(url);
+    }
+
+    return results;
+}
 private async Task<string> UploadImageToSupabaseAsync(IFormFile file, Guid userId)
 {
     var supabaseUrl = _config["Supabase:Url"]!;
@@ -101,6 +117,7 @@ public async Task<ServiceResponse<List<PostDto>>> GetPendingPostsAsync()
     var posts = await _context.Posts
         .Where(p => !p.IsVerified)
         .Include(p => p.User)
+        .Include(p => p.PostImages)
         .OrderByDescending(p => p.CreatedAt)
         .ToListAsync();
 
@@ -133,11 +150,11 @@ public async Task<ServiceResponse<PostDto>> CreatePostWithImageAsync(PostCreateF
 
     try
     {
-        string? imageUrl = null;
+        var uploadedUrls = new List<string>();
 
-        if (formDto.Image != null && formDto.Image.Length > 0)
+        if (formDto.Images != null && formDto.Images.Count > 0)
         {
-            imageUrl = await UploadImageToSupabaseAsync(formDto.Image, current.Value.userId);
+            uploadedUrls = await UploadImagesToSupabaseAsync(formDto.Images, current.Value.userId);
         }
 
         var dto = new PostCreateDto
@@ -145,24 +162,41 @@ public async Task<ServiceResponse<PostDto>> CreatePostWithImageAsync(PostCreateF
             Title = formDto.Title,
             Content = formDto.Content,
             VideoUrl = formDto.VideoUrl,
-            ImageUrl = imageUrl
+            ImageUrl = uploadedUrls.FirstOrDefault()
         };
 
         var post = _mapper.Map<Post>(dto);
         post.UserId = current.Value.userId;
         post.CreatedAt = DateTime.UtcNow;
-
-        // ✅ Admin posts are verified immediately
         post.IsVerified = string.Equals(role, Roles.Admin, StringComparison.OrdinalIgnoreCase);
+
+        if (uploadedUrls.Count > 0)
+        {
+            post.ImageUrl = uploadedUrls[0];
+            post.PostImages = uploadedUrls
+                .Select((url, index) => new PostImage
+                {
+                    ImageUrl = url,
+                    SortOrder = index
+                })
+                .ToList();
+        }
 
         _context.Posts.Add(post);
         await _context.SaveChangesAsync();
 
         var postWithUser = await _context.Posts
             .Include(p => p.User)
+            .Include(p => p.PostImages)
             .FirstAsync(p => p.Id == post.Id);
 
-        response.Data = _mapper.Map<PostDto>(postWithUser);
+        var mapped = _mapper.Map<PostDto>(postWithUser);
+        mapped.CommentsCount = 0;
+        mapped.Likes = 0;
+        mapped.Dislikes = 0;
+        mapped.MyReaction = null;
+
+        response.Data = mapped;
         response.Message = post.IsVerified
             ? "Post created and verified (Admin)."
             : "Post created, awaiting admin verification.";
@@ -215,12 +249,13 @@ public async Task<ServiceResponse<List<PostDto>>> GetAllPostsAsync()
 
     try
     {
-        var posts = await _context.Posts
+           var posts = await _context.Posts
             .AsNoTracking()
             .Where(p => p.IsVerified)
             .Include(p => p.User)
             .Include(p => p.Comments)
             .Include(p => p.PostLikes)
+            .Include(p => p.PostImages)
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
 
@@ -277,6 +312,7 @@ public async Task<ServiceResponse<List<PostDto>>> GetAllPostsForAdminAsync()
         .Include(p => p.User)
         .Include(p => p.Comments)
         .Include(p => p.PostLikes)
+        .Include(p => p.PostImages)
         .OrderByDescending(p => p.CreatedAt)
         .ToListAsync();
 
@@ -309,6 +345,7 @@ public async Task<ServiceResponse<PostDto>> GetPostByIdAsync(Guid postId)
         .Include(p => p.User)
         .Include(p => p.Comments)
         .Include(p => p.PostLikes)
+        .Include(p => p.PostImages)
         .FirstOrDefaultAsync(p => p.Id == postId);
 
     if (post == null)
@@ -525,9 +562,9 @@ public async Task<ServiceResponse<List<PostDto>>> GetMyPostsAsync()
         .Include(p => p.User)
         .Include(p => p.Comments)
         .Include(p => p.PostLikes)
+        .Include(p => p.PostImages)
         .OrderByDescending(p => p.CreatedAt)
         .ToListAsync();
-
     var dtos = _mapper.Map<List<PostDto>>(posts);
 
     // enrich reactions

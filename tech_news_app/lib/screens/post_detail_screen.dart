@@ -8,6 +8,7 @@ import '../services/api_service.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import '../widgets/post_reaction_bar.dart';
 import '../models/post_reaction_user.dart';
+import '../widgets/post_image_gallery_viewer.dart';
 
 
 class PostDetailScreen extends StatefulWidget {
@@ -357,21 +358,8 @@ Future<void> _onDislike() async {
           const SizedBox(height: 14),
 
           // Hero image
-          if (_post!.imageUrl.isNotEmpty) ...[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: CachedNetworkImage(
-                  imageUrl: _post!.imageUrl,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) =>
-                      const Center(child: CircularProgressIndicator()),
-                  errorWidget: (_, __, ___) =>
-                      const Center(child: Icon(Icons.broken_image)),
-                ),
-              ),
-            ),
+          if (_post!.allImages.isNotEmpty) ...[
+            _PostDetailImages(images: _post!.allImages),
             const SizedBox(height: 16),
           ],
 
@@ -631,6 +619,100 @@ class _ErrorView extends StatelessWidget {
             ElevatedButton(onPressed: onRetry, child: const Text("Retry")),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PostDetailImages extends StatelessWidget {
+  final List<String> images;
+
+  const _PostDetailImages({required this.images});
+
+  void _openGallery(BuildContext context, int index) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PostImageGalleryViewer(
+          imageUrls: images,
+          initialIndex: index,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (images.length == 1) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: InkWell(
+            onTap: () => _openGallery(context, 0),
+            child: CachedNetworkImage(
+              imageUrl: images[0],
+              fit: BoxFit.cover,
+              placeholder: (_, __) =>
+                  const Center(child: CircularProgressIndicator()),
+              errorWidget: (_, __, ___) =>
+                  const Center(child: Icon(Icons.broken_image)),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 340,
+      child: PageView.builder(
+        itemCount: images.length,
+        controller: PageController(viewportFraction: 0.94),
+        itemBuilder: (_, index) {
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: InkWell(
+                onTap: () => _openGallery(context, index),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    CachedNetworkImage(
+                      imageUrl: images[index],
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) =>
+                          const Center(child: CircularProgressIndicator()),
+                      errorWidget: (_, __, ___) =>
+                          const Center(child: Icon(Icons.broken_image)),
+                    ),
+                    Positioned(
+                      right: 12,
+                      bottom: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          "${index + 1}/${images.length}",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

@@ -81,28 +81,28 @@ class ApiService {
   }
 
   // ✅ Multipart create (with optional image)
-  Future<Post> createPostWithImage({
+    Future<Post> createPostWithImage({
     required String title,
     required String content,
     String? videoUrl,
-    File? imageFile,
+    List<File> imageFiles = const [],
   }) async {
     final uri = Uri.parse("${AppConfig.apiBaseUrl}/posts/with-image");
     final request = http.MultipartRequest("POST", uri);
 
-    // ✅ Add auth header only. DO NOT set Content-Type manually.
     request.headers.addAll(await _authHeaderOnly());
 
     request.fields["Title"] = title;
     request.fields["Content"] = content;
+
     if (videoUrl != null && videoUrl.trim().isNotEmpty) {
       request.fields["VideoUrl"] = videoUrl.trim();
     }
 
-    if (imageFile != null) {
+    for (final imageFile in imageFiles) {
       request.files.add(
         await http.MultipartFile.fromPath(
-          "Image",
+          "Images",
           imageFile.path,
           filename: p.basename(imageFile.path),
         ),
@@ -119,7 +119,6 @@ class ApiService {
 
     throw Exception("Failed to create post (${res.statusCode}): ${res.body}");
   }
-
   // Admin endpoints
   Future<List<Post>> getAllPostsAdmin() async {
     final res = await _client

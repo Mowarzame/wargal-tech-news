@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../models/post.dart';
 import '../services/api_service.dart';
 
@@ -12,8 +11,7 @@ class ModerationScreen extends StatefulWidget {
 
 class _ModerationScreenState extends State<ModerationScreen> {
   final _api = ApiService();
-  final Map<String, bool> _expanded = {}; // postId -> expanded?
-
+  final Map<String, bool> _expanded = {};
 
   List<Post> _posts = [];
   bool _loading = true;
@@ -32,14 +30,12 @@ class _ModerationScreenState extends State<ModerationScreen> {
     });
 
     try {
-      // ✅ Admin sees ALL posts (verified + pending)
       final posts = await _api.getAllPostsAdmin();
 
-      // Optional: show pending first
       posts.sort((a, b) {
         final aPending = a.isVerified ? 1 : 0;
         final bPending = b.isVerified ? 1 : 0;
-        return aPending.compareTo(bPending); // pending (0) before verified (1)
+        return aPending.compareTo(bPending);
       });
 
       if (!mounted) return;
@@ -48,58 +44,37 @@ class _ModerationScreenState extends State<ModerationScreen> {
       if (!mounted) return;
       setState(() => _error = e.toString());
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
-Future<void> _verify(String id) async {
-  try {
-    await _api.verifyPost(id);
+  Future<void> _verify(String id) async {
+    try {
+      await _api.verifyPost(id);
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _posts = _posts.map((p) {
-        if (p.id == id) {
-          // keep likes/dislikes/myReaction intact
-          return p.copyWith().copyWith(); // no-op but safe
-        }
-        return p;
-      }).toList();
+      setState(() {
+        _posts = _posts.map((p) {
+          if (p.id == id) {
+            return p.copyWith(isVerified: true);
+          }
+          return p;
+        }).toList();
+      });
 
-      // actually update isVerified (copyWith currently doesn’t support it)
-      _posts = _posts.map((p) {
-        if (p.id == id) {
-          return Post(
-            id: p.id,
-            title: p.title,
-            content: p.content,
-            imageUrl: p.imageUrl,
-            videoUrl: p.videoUrl,
-            createdAt: p.createdAt,
-            commentsCount: p.commentsCount,
-            isVerified: true,
-            user: p.user,
-            likes: p.likes,
-            dislikes: p.dislikes,
-            myReaction: p.myReaction,
-          );
-        }
-        return p;
-      }).toList();
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Post verified ✅")),
-    );
-  } catch (e) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Verify failed: $e")),
-    );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Post verified ✅")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Verify failed: $e")),
+      );
+    }
   }
-}
 
   Future<void> _unverify(String id) async {
     try {
@@ -107,24 +82,10 @@ Future<void> _verify(String id) async {
 
       if (!mounted) return;
 
-      // ✅ update in-place so it stays visible
       setState(() {
         _posts = _posts.map((p) {
           if (p.id == id) {
-            return Post(
-              id: p.id,
-              title: p.title,
-              content: p.content,
-              imageUrl: p.imageUrl,
-              videoUrl: p.videoUrl,
-              createdAt: p.createdAt,
-              commentsCount: p.commentsCount,
-              isVerified: false,
-              user: p.user,
-              likes: p.likes,
-              myReaction: p.myReaction,
-              dislikes: p.dislikes
-            );
+            return p.copyWith(isVerified: false);
           }
           return p;
         }).toList();
@@ -148,8 +109,14 @@ Future<void> _verify(String id) async {
         title: const Text("Delete post?"),
         content: const Text("This will permanently remove the post."),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
-          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text("Delete")),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Delete"),
+          ),
         ],
       ),
     );
@@ -161,7 +128,6 @@ Future<void> _verify(String id) async {
 
       if (!mounted) return;
 
-      // ✅ only delete removes it from moderation list
       setState(() => _posts.removeWhere((p) => p.id == id));
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -180,7 +146,12 @@ Future<void> _verify(String id) async {
     return RefreshIndicator(
       onRefresh: _loadAll,
       child: _loading
-          ?  ListView(children: [SizedBox(height: 250), Center(child: CircularProgressIndicator())])
+          ? ListView(
+              children: const [
+                SizedBox(height: 250),
+                Center(child: CircularProgressIndicator()),
+              ],
+            )
           : _error != null
               ? ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
@@ -189,7 +160,10 @@ Future<void> _verify(String id) async {
                     Center(child: Text(_error!, textAlign: TextAlign.center)),
                     const SizedBox(height: 12),
                     Center(
-                      child: ElevatedButton(onPressed: _loadAll, child: const Text("Retry")),
+                      child: ElevatedButton(
+                        onPressed: _loadAll,
+                        child: const Text("Retry"),
+                      ),
                     ),
                   ],
                 )
@@ -205,22 +179,21 @@ Future<void> _verify(String id) async {
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.only(top: 8, bottom: 20),
                       itemCount: _posts.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 2),
+                      separatorBuilder: (_, _) => const SizedBox(height: 2),
                       itemBuilder: (context, index) {
-            final post = _posts[index];
-final isExpanded = _expanded[post.id] ?? false;
+                        final post = _posts[index];
+                        final isExpanded = _expanded[post.id] ?? false;
 
-return _ModerationCard(
-  post: post,
-  isExpanded: isExpanded,
-  onToggleExpanded: () {
-    setState(() => _expanded[post.id] = !isExpanded);
-  },
-  onVerify: () => _verify(post.id),
-  onUnverify: () => _unverify(post.id),
-  onDelete: () => _delete(post.id),
-);
-
+                        return _ModerationCard(
+                          post: post,
+                          isExpanded: isExpanded,
+                          onToggleExpanded: () {
+                            setState(() => _expanded[post.id] = !isExpanded);
+                          },
+                          onVerify: () => _verify(post.id),
+                          onUnverify: () => _unverify(post.id),
+                          onDelete: () => _delete(post.id),
+                        );
                       },
                     ),
     );
@@ -250,7 +223,6 @@ class _ModerationCard extends StatelessWidget {
     final content = post.content.trim();
     final hasContent = content.isNotEmpty;
 
-    // Show a preview when collapsed
     const previewLines = 3;
 
     return Card(
@@ -259,7 +231,6 @@ class _ModerationCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Author + status
             Row(
               children: [
                 CircleAvatar(
@@ -279,14 +250,20 @@ class _ModerationCard extends StatelessWidget {
                     children: [
                       Text(
                         post.user.name,
-                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
                       Text(
                         _formatDate(post.createdAt),
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -294,23 +271,27 @@ class _ModerationCard extends StatelessWidget {
                 _StatusChip(isVerified: post.isVerified),
               ],
             ),
-
             const SizedBox(height: 12),
-
             Text(
               post.title,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, height: 1.25),
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                height: 1.25,
+              ),
             ),
-
             const SizedBox(height: 10),
-
-            // Content with read more/less
             if (hasContent) ...[
               Text(
                 content,
                 maxLines: isExpanded ? null : previewLines,
-                overflow: isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-                style: TextStyle(color: Colors.grey.shade800, height: 1.55, fontSize: 14.2),
+                overflow:
+                    isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.grey.shade800,
+                  height: 1.55,
+                  fontSize: 14.2,
+                ),
               ),
               const SizedBox(height: 8),
               Align(
@@ -321,8 +302,6 @@ class _ModerationCard extends StatelessWidget {
                 ),
               ),
             ],
-
-            // Image: show always, or only when expanded (your choice)
             if (hasImage) ...[
               const SizedBox(height: 8),
               ClipRRect(
@@ -332,7 +311,8 @@ class _ModerationCard extends StatelessWidget {
                   child: Image.network(
                     post.imageUrl,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image)),
+                    errorBuilder: (_, _, _) =>
+                        const Center(child: Icon(Icons.broken_image)),
                     loadingBuilder: (context, child, progress) {
                       if (progress == null) return child;
                       return const Center(child: CircularProgressIndicator());
@@ -341,10 +321,7 @@ class _ModerationCard extends StatelessWidget {
                 ),
               ),
             ],
-
             const SizedBox(height: 14),
-
-            // Actions
             Row(
               children: [
                 Expanded(
@@ -382,7 +359,6 @@ class _ModerationCard extends StatelessWidget {
   }
 }
 
-
 class _StatusChip extends StatelessWidget {
   final bool isVerified;
   const _StatusChip({required this.isVerified});
@@ -395,9 +371,9 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withOpacity(0.25)),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Text(
         text,

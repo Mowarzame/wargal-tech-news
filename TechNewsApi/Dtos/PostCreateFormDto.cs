@@ -10,5 +10,7 @@ namespace TechNewsApi.Dtos
 
         // Field name must match Flutter Multipart key: "Image"
         public IFormFile? Image { get; set; }
+                // Flutter Multipart key: "Images"
+        public List<IFormFile>? Images { get; set; }
     }
 }
