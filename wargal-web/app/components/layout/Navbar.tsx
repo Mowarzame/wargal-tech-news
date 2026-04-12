@@ -36,12 +36,16 @@ import { fetchFeedSources } from "@/app/lib/api";
 import type { NewsSource } from "@/app/types/news";
 import { useAuth } from "@/app/providers/AuthProvider";
 import GoogleSignInButton from "@/app/components/auth/GoogleSignInButton";
+import AndroidIcon from "@mui/icons-material/Android";
 
 const REFRESH_MS = 60 * 1000;
 
 function clean(s?: string | null) {
   return (s ?? "").trim();
 }
+
+const PLAY_STORE_URL =
+  "https://play.google.com/store/apps/details?id=com.wargalstudio.wargalnews";
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -161,7 +165,7 @@ const tabValue = React.useMemo(() => {
   };
 
   // ✅ Always reserve a stable right-side width to prevent navbar shifting on reload/hydration
-  const RIGHT_WIDTH_DESKTOP = 170; // sign-in button / avatar area
+const RIGHT_WIDTH_DESKTOP = 260; // sign-in button / avatar area
   const RIGHT_WIDTH_MOBILE = 56; // hamburger or avatar+hamburger
 
   return (
@@ -186,7 +190,64 @@ const tabValue = React.useMemo(() => {
             />
           </Box>
         </Box>
+<Box
+  component="a"
+  href={PLAY_STORE_URL}
+  target="_blank"
+  rel="noopener noreferrer"
+  sx={{
+    display: { xs: "none", md: "flex" },
+    alignItems: "center",
+    gap: 1,
+    px: 1.5,
+    py: 0.6,
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.35)",
+    textDecoration: "none",
+    color: "white",
+    bgcolor: "rgba(255,255,255,0.08)",
 
+    // 🔑 critical fixes
+    flexShrink: 0,
+    whiteSpace: "nowrap",
+
+    "&:hover": {
+      bgcolor: "rgba(255,255,255,0.15)",
+    },
+  }}
+>
+  <AndroidIcon sx={{ fontSize: 20, flexShrink: 0 }} />
+
+  <Box
+    sx={{
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "center",
+      lineHeight: 1,
+      minWidth: "fit-content",
+    }}
+  >
+    <Typography
+      sx={{
+        fontWeight: 900,
+        fontSize: 12,
+        whiteSpace: "nowrap",
+      }}
+    >
+      Get Wargal App
+    </Typography>
+
+    <Typography
+      sx={{
+        fontSize: 10,
+        opacity: 0.8,
+        whiteSpace: "nowrap",
+      }}
+    >
+      Google Play only
+    </Typography>
+  </Box>
+</Box>
         {/* Center: marquee */}
         <Box sx={{ flex: 1, display: "flex", justifyContent: "center", minWidth: 0 }}>
           <SourcesMarquee sources={sources} />
@@ -221,6 +282,9 @@ const tabValue = React.useMemo(() => {
             flexShrink: 0,
           }}
         >
+
+          {/* Get App button (desktop only) */}
+
           {!isReady ? (
             <>
               {/* Desktop skeleton */}
@@ -349,7 +413,35 @@ const tabValue = React.useMemo(() => {
         </Box>
 
         <Divider />
+<Box
+  component="a"
+  href={PLAY_STORE_URL}
+  target="_blank"
+  rel="noopener noreferrer"
+  onClick={closeDrawer}
+  sx={{
+    mx: 2,
+    my: 2,
+    p: 2,
+    borderRadius: 3,
+    display: "flex",
+    alignItems: "center",
+    gap: 2,
+    textDecoration: "none",
+    bgcolor: "rgba(0,0,0,0.05)",
+  }}
+>
+  <AndroidIcon sx={{ fontSize: 34 }} />
 
+  <Box>
+    <Typography sx={{ fontWeight: 900 }}>
+      Download Wargal App
+    </Typography>
+    <Typography variant="caption" color="text.secondary">
+      Available only on Google Play
+    </Typography>
+  </Box>
+</Box>
         <List sx={{ py: 0 }}>
           <ListItemButton onClick={() => doNav("/")}>
             <ListItemText primary="News" primaryTypographyProps={{ fontWeight: 900 }} />
